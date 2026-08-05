@@ -248,10 +248,11 @@ def build_summary(order_map, cp_status):
         daily_counts[order_date][cat] += 1
 
     rows = [SUMMARY_COLS]
+    grand = defaultdict(int)  # running totals across all dates
+
     for date_str in sorted(daily_counts.keys(), reverse=True):
         c     = daily_counts[date_str]
         total = sum(c.values()) or 1
-        # Confirmed = all non-cancelled orders = Total - Cancelled
         confirmed = total - c["Cancelled"]
 
         def pct(v):
@@ -268,6 +269,35 @@ def build_summary(order_map, cp_status):
             pct(c["In Transit"]), pct(c["Out for delivery"]),
             pct(c["Delivered"]), pct(c["Undelivered"]), pct(c["RTO"]),
         ])
+
+        # accumulate totals
+        grand["total"]     += total
+        grand["Cancelled"] += c["Cancelled"]
+        grand["PFD"]       += c["PFD"]
+        grand["In Transit"]       += c["In Transit"]
+        grand["Out for delivery"] += c["Out for delivery"]
+        grand["Delivered"]        += c["Delivered"]
+        grand["Undelivered"]      += c["Undelivered"]
+        grand["RTO"]              += c["RTO"]
+
+    # Totals row at the bottom
+    gt = grand["total"] or 1
+    g_confirmed = gt - grand["Cancelled"]
+
+    def gpct(v):
+        return round(v / gt, 4)
+
+    rows.append([
+        "TOTAL", gt,
+        grand["Cancelled"], g_confirmed, grand["PFD"],
+        grand["In Transit"], grand["Out for delivery"],
+        grand["Delivered"], grand["Undelivered"], grand["RTO"],
+        "",
+        gpct(grand["Cancelled"]), gpct(g_confirmed), gpct(grand["PFD"]),
+        gpct(grand["In Transit"]), gpct(grand["Out for delivery"]),
+        gpct(grand["Delivered"]), gpct(grand["Undelivered"]), gpct(grand["RTO"]),
+    ])
+
     return rows
 
 # ── Step 4: Write to Google Sheets ────────────────────────────────────────────
@@ -371,6 +401,20 @@ def beautify(sh, orders_ws, summary_ws, num_order_rows):
                           "startIndex": i, "endIndex": i + 1},
                 "properties": {"pixelSize": w}, "fields": "pixelSize",
             }})
+
+    # Summary: bold TOTAL row at the bottom (row index = len of summary data)
+    # We don't know the exact row at beautify time, so freeze last 1 row via a named range isn't easy;
+    # instead apply bold+dark bg to a wide range at the bottom using a known max row
+    reqs.append({"repeatCell": {
+        "range": {"sheetId": sid, "startRowIndex": 49, "endRowIndex": 50,
+                  "startColumnIndex": 0, "endColumnIndex": len(SUMMARY_COLS)},
+        "cell": {"userEnteredFormat": {
+            "backgroundColor": rgb(DARK),
+            "textFormat": {"foregroundColor": rgb(WHITE), "bold": True, "fontSize": 10},
+            "horizontalAlignment": "CENTER",
+        }},
+        "fields": "userEnteredFormat",
+    }})
 
     # Freeze header
     for sheet_id in [oid, sid]:
