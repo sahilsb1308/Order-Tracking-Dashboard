@@ -44,21 +44,19 @@ STATUS_LABELS = ["Cancelled", "Confirmed", "PFD", "In Transit",
                  "Out for delivery", "Delivered", "Undelivered", "RTO"]
 
 STATUS_MAP = {
-    "Confirmed":        {1, 28},
-    "PFD":              {2, 3, 25, 40, 41, 42, 43},
+    # Confirmed and Cancelled now come from Shopify, not Clickpost
     "In Transit":       {4, 5, 18, 19, 20, 1004, 1005, 1006},
     "Out for delivery": {6, 44},
     "Delivered":        {8, 48},
     "Undelivered":      {9},
     "RTO":              {11, 12, 13, 14, 15, 21, 26, 27, 45, 47, 50, 52},
-    "Cancelled":        {10, 23},
 }
 
 SUMMARY_COLS = (["Date", "Grand Total"] + STATUS_LABELS +
                 [""] + [s + " %" for s in STATUS_LABELS])
 
 ORDER_COLS = [
-    "Shopify Order #", "Order ID", "AWB", "Channel",
+    "Shopify Order #", "AWB", "Channel",
     "Order Date (IST)", "Last Updated (IST)", "Last Scan Time",
     "Status Code", "Status", "Location", "City", "Courier Partner", "Remark",
 ]
@@ -99,7 +97,7 @@ def fetch_shopify_orders():
         "created_at_min": f"{START_DATE}T00:00:00+05:30",
         "status": "any",
         "limit":  250,
-        "fields": "id,order_number,created_at,fulfillments",
+        "fields": "id,order_number,created_at,fulfillments,cancelled_at",
     }
 
     order_map = {}  # order_number -> {order_date, shopify_id, awb}
@@ -129,9 +127,9 @@ def fetch_shopify_orders():
                     break
 
             order_map[order_number] = {
-                "order_date": order_date,
-                "shopify_id": str(order.get("id", "")),
-                "awb":        awb,
+                "order_date":   order_date,
+                "awb":          awb,
+                "cancelled_at": order.get("cancelled_at") or "",
             }
 
         print(f"  Page {page}: {len(orders)} orders (total: {len(order_map):,})", flush=True)
@@ -207,16 +205,16 @@ def build_orders(order_map, cp_status):
     ):
         rec  = cp_status.get(order_number, {})
         code = rec.get("clickpost_status_code", "")
+        cancelled = bool(shopify.get("cancelled_at"))
         rows.append([
             order_number,
-            shopify.get("shopify_id", ""),
             shopify.get("awb", "") or rec.get("waybill", ""),
             rec.get("channel_name", "Swiss Beauty"),
             shopify.get("order_date", ""),
             to_ist_str(rec.get("updated_at", "")),
             rec.get("timestamp", ""),
             code,
-            rec.get("clickpost_status_description", ""),
+            "Cancelled" if cancelled else rec.get("clickpost_status_description", ""),
             rec.get("location", ""),
             rec.get("clickpost_city", ""),
             rec.get("courier_partner", ""),
@@ -225,37 +223,50 @@ def build_orders(order_map, cp_status):
     return rows
 
 def build_summary(order_map, cp_status):
-    """Group by Shopify order_date, count by Clickpost status."""
+    """Group by Shopify order_date.
+    Cancelled/Confirmed → from Shopify cancelled_at.
+    PFD = Confirmed − dispatched (orders with no Clickpost record yet).
+    In Transit / OFD / Delivered / Undelivered / RTO → from Clickpost.
+    """
     daily_counts = defaultdict(lambda: defaultdict(int))
+
     for order_number, shopify in order_map.items():
         order_date = shopify.get("order_date", "")
         if not order_date or order_date < START_DATE:
             continue
-        rec  = cp_status.get(order_number, {})
-        code = rec.get("clickpost_status_code")
-        # Orders not yet in Clickpost → Confirmed
-        cat  = get_category(code) if code is not None else "Confirmed"
-        if cat:
-            daily_counts[order_date][cat] += 1
+
+        if shopify.get("cancelled_at"):
+            cat = "Cancelled"
+        else:
+            rec  = cp_status.get(order_number, {})
+            code = rec.get("clickpost_status_code")
+            cat  = get_category(code) if code is not None else None
+            # No Clickpost record, or code not in our map → PFD (not yet dispatched)
+            if cat is None:
+                cat = "PFD"
+
+        daily_counts[order_date][cat] += 1
 
     rows = [SUMMARY_COLS]
     for date_str in sorted(daily_counts.keys(), reverse=True):
         c     = daily_counts[date_str]
         total = sum(c.values()) or 1
+        # Confirmed = all non-cancelled orders = Total - Cancelled
+        confirmed = total - c["Cancelled"]
 
-        def pct(key):
-            return round(c[key] / total * 100, 1)
+        def pct(v):
+            return round(v / total, 4)
 
         d = datetime.strptime(date_str, "%Y-%m-%d")
         rows.append([
             fmt_date(d), total,
-            c["Cancelled"], c["Confirmed"], c["PFD"],
+            c["Cancelled"], confirmed, c["PFD"],
             c["In Transit"], c["Out for delivery"],
             c["Delivered"], c["Undelivered"], c["RTO"],
             "",
-            pct("Cancelled"), pct("Confirmed"), pct("PFD"),
-            pct("In Transit"), pct("Out for delivery"),
-            pct("Delivered"), pct("Undelivered"), pct("RTO"),
+            pct(c["Cancelled"]), pct(confirmed), pct(c["PFD"]),
+            pct(c["In Transit"]), pct(c["Out for delivery"]),
+            pct(c["Delivered"]), pct(c["Undelivered"]), pct(c["RTO"]),
         ])
     return rows
 
@@ -303,6 +314,17 @@ def beautify(sh, orders_ws, summary_ws, num_order_rows):
                 "fields": "userEnteredFormat",
             }})
 
+    # Summary: % columns (L–S = index 11–18) → PERCENT format
+    reqs.append({"repeatCell": {
+        "range": {"sheetId": sid, "startRowIndex": 1, "endRowIndex": 50,
+                  "startColumnIndex": 11, "endColumnIndex": 19},
+        "cell": {"userEnteredFormat": {
+            "numberFormat": {"type": "PERCENT", "pattern": "0.0%"},
+            "horizontalAlignment": "CENTER",
+        }},
+        "fields": "userEnteredFormat(numberFormat,horizontalAlignment)",
+    }})
+
     # Summary: center-align numbers, bold Grand Total
     reqs.append({"repeatCell": {
         "range": {"sheetId": sid, "startRowIndex": 1, "endRowIndex": 50,
@@ -339,7 +361,7 @@ def beautify(sh, orders_ws, summary_ws, num_order_rows):
 
     # Column widths
     for sheet_id, widths in [
-        (oid, [120, 100, 160, 100, 120, 155, 155, 80, 130, 150, 100, 110, 260]),
+        (oid, [120, 160, 100, 120, 155, 155, 80, 130, 150, 100, 110, 260]),
         (sid, [100, 90, 90, 90, 90, 90, 125, 90, 100, 80, 20,
                90, 90, 80, 90, 130, 90, 100, 80]),
     ]:
