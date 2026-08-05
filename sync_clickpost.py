@@ -445,6 +445,30 @@ def beautify(sh, orders_ws, summary_ws, num_order_rows):
             "index": 0,
         }})
 
+    # Summary: flag stale non-zero cells with light red
+    # PFD older than 3 days (skip rows 1-3, start at index 4), col E = index 4
+    # In Transit older than 10 days (skip rows 1-10, start at index 11), col F = index 5
+    # Undelivered older than 10 days, col I = index 8
+    STALE_CF = [
+        (4,  49, "#E8453C"),   # PFD col (index 4),        rows after first 3 days
+        (5,  11, "#F1948A"),   # In Transit col (index 5),  rows after first 10 days
+        (8,  11, "#F1948A"),   # Undelivered col (index 8), rows after first 10 days
+    ]
+    for col_idx, start_row, hex_color in STALE_CF:
+        reqs.append({"addConditionalFormatRule": {
+            "rule": {
+                "ranges": [{"sheetId": sid,
+                            "startRowIndex": start_row, "endRowIndex": 49,
+                            "startColumnIndex": col_idx, "endColumnIndex": col_idx + 1}],
+                "booleanRule": {
+                    "condition": {"type": "NUMBER_GREATER_THAN",
+                                  "values": [{"userEnteredValue": "0"}]},
+                    "format": {"backgroundColor": rgb(hex_color)},
+                },
+            },
+            "index": 0,
+        }})
+
     sh.batch_update({"requests": reqs})
     print("Formatting applied.")
 
