@@ -461,7 +461,7 @@ def beautify(sh, orders_ws, summary_ws, num_order_rows):
                             "startRowIndex": start_row, "endRowIndex": 49,
                             "startColumnIndex": col_idx, "endColumnIndex": col_idx + 1}],
                 "booleanRule": {
-                    "condition": {"type": "NUMBER_GREATER_THAN",
+                    "condition": {"type": "NUMBER_GREATER",
                                   "values": [{"userEnteredValue": "0"}]},
                     "format": {"backgroundColor": rgb(hex_color)},
                 },
