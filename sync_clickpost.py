@@ -34,10 +34,9 @@ elif _SA_FILE:
 else:
     raise EnvironmentError("Set GOOGLE_SERVICE_ACCOUNT_JSON or GOOGLE_SERVICE_ACCOUNT_FILE")
 
-IST          = timezone(timedelta(hours=5, minutes=30))
-ROLLING_DAYS = 30
-START_DATE   = str((datetime.now(IST) - timedelta(days=ROLLING_DAYS)).date())
-FETCH_DAYS   = ROLLING_DAYS
+IST        = timezone(timedelta(hours=5, minutes=30))
+START_DATE = "2026-07-01"   # fixed start — fetch everything from 1 July onwards
+FETCH_DAYS = (datetime.now(IST).date() - datetime.strptime(START_DATE, "%Y-%m-%d").date()).days + 1
 
 # ── Status mappings ───────────────────────────────────────────────────────────
 STATUS_LABELS = ["Cancelled", "Confirmed", "PFD", "In Transit",
