@@ -126,9 +126,10 @@ def fetch_shopify_orders():
                     break
 
             order_map[order_number] = {
-                "order_date":   order_date,
-                "awb":          awb,
-                "cancelled_at": order.get("cancelled_at") or "",
+                "order_date":      order_date,
+                "awb":             awb,
+                "cancelled_at":    order.get("cancelled_at") or "",
+                "has_fulfillment": bool(order.get("fulfillments")),
             }
 
         print(f"  Page {page}: {len(orders)} orders (total: {len(order_map):,})", flush=True)
@@ -222,7 +223,7 @@ def build_orders(order_map, cp_status):
     ):
         rec  = cp_status.get(order_number, {})
         code = rec.get("clickpost_status_code", "")
-        cancelled = bool(shopify.get("cancelled_at"))
+        cancelled = bool(shopify.get("cancelled_at")) and not shopify.get("has_fulfillment")
         rows.append([
             order_number,
             shopify.get("awb", "") or rec.get("waybill", ""),
@@ -252,7 +253,7 @@ def build_summary(order_map, cp_status):
         if not order_date or order_date < START_DATE:
             continue
 
-        if shopify.get("cancelled_at"):
+        if shopify.get("cancelled_at") and not shopify.get("has_fulfillment"):
             cat = "Cancelled"
         else:
             rec  = cp_status.get(order_number, {})
