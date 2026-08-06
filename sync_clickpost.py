@@ -48,7 +48,7 @@ STATUS_MAP = {
     "Out for delivery": {6, 44},
     "Delivered":        {8, 48},
     "Undelivered":      {9},
-    "RTO":              {11, 12, 13, 14, 15, 21, 26, 27, 45, 47, 50, 52},
+    "RTO":              {11, 12, 13, 14, 15, 21, 26, 27, 45, 46, 47, 50, 52},
 }
 
 SUMMARY_COLS = (["Date", "Grand Total"] + STATUS_LABELS +
