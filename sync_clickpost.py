@@ -52,7 +52,7 @@ STATUS_MAP = {
 }
 
 SUMMARY_COLS = (["Date", "Grand Total"] + STATUS_LABELS +
-                [""] + [s + " %" for s in STATUS_LABELS])
+                [""] + [s + " %" for s in STATUS_LABELS if s != "Confirmed"])
 
 ORDER_COLS = [
     "Shopify Order #", "AWB", "Channel",
@@ -283,7 +283,7 @@ def build_summary(order_map, cp_status):
             c["In Transit"], c["Out for delivery"],
             c["Delivered"], c["Undelivered"], c["RTO"],
             "",
-            pct(c["Cancelled"]), pct(confirmed), pct(c["PFD"]),
+            pct(c["Cancelled"]), pct(c["PFD"]),
             pct(c["In Transit"]), pct(c["Out for delivery"]),
             pct(c["Delivered"]), pct(c["Undelivered"]), pct(c["RTO"]),
         ])
@@ -311,7 +311,7 @@ def build_summary(order_map, cp_status):
         grand["In Transit"], grand["Out for delivery"],
         grand["Delivered"], grand["Undelivered"], grand["RTO"],
         "",
-        gpct(grand["Cancelled"]), gpct(g_confirmed), gpct(grand["PFD"]),
+        gpct(grand["Cancelled"]), gpct(grand["PFD"]),
         gpct(grand["In Transit"]), gpct(grand["Out for delivery"]),
         gpct(grand["Delivered"]), gpct(grand["Undelivered"]), gpct(grand["RTO"]),
     ])
@@ -365,7 +365,7 @@ def beautify(sh, orders_ws, summary_ws, num_order_rows):
     # Summary: % columns (L–S = index 11–18) → PERCENT format
     reqs.append({"repeatCell": {
         "range": {"sheetId": sid, "startRowIndex": 1, "endRowIndex": 50,
-                  "startColumnIndex": 11, "endColumnIndex": 19},
+                  "startColumnIndex": 11, "endColumnIndex": 18},
         "cell": {"userEnteredFormat": {
             "numberFormat": {"type": "PERCENT", "pattern": "0.0%"},
             "horizontalAlignment": "CENTER",
@@ -411,7 +411,7 @@ def beautify(sh, orders_ws, summary_ws, num_order_rows):
     for sheet_id, widths in [
         (oid, [120, 160, 100, 120, 155, 155, 80, 130, 150, 100, 110, 260]),
         (sid, [100, 90, 90, 90, 90, 90, 125, 90, 100, 80, 20,
-               90, 90, 80, 90, 130, 90, 100, 80]),
+               90, 80, 90, 130, 90, 100, 80]),
     ]:
         for i, w in enumerate(widths):
             reqs.append({"updateDimensionProperties": {
