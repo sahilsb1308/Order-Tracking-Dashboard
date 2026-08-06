@@ -163,29 +163,47 @@ def fetch_clickpost_statuses():
             if win_start >= now:
                 break
             win_end = win_start + timedelta(minutes=30)
+            next_url = None
+            page = 0
             try:
-                r = requests.get(
-                    "https://api.clickpost.in/api/v1/updated-order",
-                    params={"key": CLICKPOST_KEY, "username": CLICKPOST_USERNAME,
-                            "start_date": int(win_start.timestamp()),
-                            "end_date":   int(win_end.timestamp())},
-                    headers={"accept": "application/json"},
-                    timeout=30,
-                )
-                r.raise_for_status()
-                data = r.json()
-                records = data.get("result", []) if data.get("meta", {}).get("success") else []
-                print(".", end="", flush=True)
+                while True:
+                    if next_url:
+                        r = requests.get(next_url, headers={"accept": "application/json"}, timeout=30)
+                    else:
+                        r = requests.get(
+                            "https://api.clickpost.in/api/v1/updated-order",
+                            params={"key": CLICKPOST_KEY, "username": CLICKPOST_USERNAME,
+                                    "start_date": int(win_start.timestamp()),
+                                    "end_date":   int(win_end.timestamp())},
+                            headers={"accept": "application/json"},
+                            timeout=30,
+                        )
+                    r.raise_for_status()
+                    data = r.json()
+                    meta = data.get("meta", {})
+                    if not meta.get("success"):
+                        break
+                    records = data.get("result", [])
+                    page += 1
+                    if page == 1:
+                        print(".", end="", flush=True)
+                    else:
+                        print(f"p{page}", end="", flush=True)
 
-                for rec in records:
-                    oid        = str(rec.get("order_id") or "").strip()
-                    code       = rec.get("clickpost_status_code")
-                    updated_at = rec.get("updated_at") or ""
-                    if not oid or code is None:
-                        continue
-                    existing = waybill_latest.get(oid)
-                    if existing is None or updated_at > existing.get("updated_at", ""):
-                        waybill_latest[oid] = rec
+                    for rec in records:
+                        oid        = str(rec.get("order_id") or "").strip()
+                        code       = rec.get("clickpost_status_code")
+                        updated_at = rec.get("updated_at") or ""
+                        if not oid or code is None:
+                            continue
+                        existing = waybill_latest.get(oid)
+                        if existing is None or updated_at > existing.get("updated_at", ""):
+                            waybill_latest[oid] = rec
+
+                    next_url = meta.get("next") or None
+                    if not next_url or not records:
+                        break
+                    time.sleep(0.05)
             except Exception as e:
                 print(f"[ERR:{e}]", end="", flush=True)
             time.sleep(0.05)
