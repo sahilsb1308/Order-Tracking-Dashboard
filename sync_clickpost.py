@@ -450,9 +450,9 @@ def beautify(sh, orders_ws, summary_ws, num_order_rows):
     # In Transit older than 10 days (skip rows 1-10, start at index 11), col F = index 5
     # Undelivered older than 10 days, col I = index 8
     STALE_CF = [
-        (4,  49, "#E8453C"),   # PFD col (index 4),        rows after first 3 days
-        (5,  11, "#F1948A"),   # In Transit col (index 5),  rows after first 10 days
-        (8,  11, "#F1948A"),   # Undelivered col (index 8), rows after first 10 days
+        (4,  49, "#F4CCCC"),   # PFD col (index 4),        rows after first 3 days  — light red
+        (5,  11, "#FFF2CC"),   # In Transit col (index 5),  rows after first 10 days — light yellow
+        (8,  11, "#E6D0F0"),   # Undelivered col (index 8), rows after first 10 days — light purple
     ]
     for col_idx, start_row, hex_color in STALE_CF:
         reqs.append({"addConditionalFormatRule": {
