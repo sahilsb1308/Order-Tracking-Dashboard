@@ -96,14 +96,31 @@ def fetch_shopify_orders():
         "created_at_min": f"{START_DATE}T00:00:00+05:30",
         "status": "any",
         "limit":  250,
+        "order":  "created_at asc",   # oldest first — July data fetched before August
         "fields": "id,order_number,created_at,fulfillments,cancelled_at",
     }
 
     order_map = {}  # order_number -> {order_date, shopify_id, awb}
     page = 1
     while True:
-        resp = requests.get(url, headers=headers, params=params, timeout=30)
-        resp.raise_for_status()
+        # retry up to 3 times on transient errors
+        for attempt in range(3):
+            try:
+                resp = requests.get(url, headers=headers, params=params, timeout=60)
+                if resp.status_code == 429:
+                    retry_after = int(resp.headers.get("Retry-After", 10))
+                    print(f"  [rate limit] sleeping {retry_after}s", flush=True)
+                    time.sleep(retry_after)
+                    continue
+                resp.raise_for_status()
+                break
+            except Exception as e:
+                print(f"  [retry {attempt+1}] {e}", flush=True)
+                time.sleep(5)
+        else:
+            print("  Shopify fetch failed after 3 retries — stopping pagination.", flush=True)
+            break
+
         orders = resp.json().get("orders", [])
         if not orders:
             break
@@ -117,7 +134,6 @@ def fetch_shopify_orders():
             except Exception:
                 order_date = ""
 
-            # Get first AWB from fulfillments (if any)
             awb = ""
             for f in order.get("fulfillments", []):
                 tn = (f.get("tracking_number") or "").strip()
@@ -143,7 +159,7 @@ def fetch_shopify_orders():
             break
         next_url = match.group(1)
         params = {"page_info": next_url.split("page_info=")[1].split("&")[0], "limit": 250}
-        time.sleep(0.3)
+        time.sleep(0.5)
 
     print(f"Shopify fetch complete — {len(order_map):,} orders from {page-1} pages.", flush=True)
     return order_map
