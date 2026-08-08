@@ -44,7 +44,9 @@ STATUS_LABELS = ["Cancelled", "Confirmed", "PFD", "In Transit",
 
 STATUS_MAP = {
     # Confirmed and Cancelled now come from Shopify, not Clickpost
-    "In Transit":       {4, 5, 18, 19, 20, 1004, 1005, 1006},
+    # Codes 1-3 = pre-pickup stages (OrderPlaced, OutForPickup, PickedUp)
+    # Codes 1004-1006 = Clickpost internal transit codes
+    "In Transit":       {1, 2, 3, 4, 5, 17, 18, 19, 20, 25, 28, 1004, 1005, 1006},
     "Out for delivery": {6, 44},
     "Delivered":        {8, 48},
     "Undelivered":      {9},
@@ -182,48 +184,62 @@ def fetch_clickpost_statuses():
             win_end = win_start + timedelta(minutes=30)
             next_url = None
             page = 0
-            try:
-                while True:
-                    if next_url:
-                        r = requests.get(next_url, headers={"accept": "application/json"}, timeout=30)
-                    else:
-                        r = requests.get(
-                            "https://api.clickpost.in/api/v1/updated-order",
-                            params={"key": CLICKPOST_KEY, "username": CLICKPOST_USERNAME,
-                                    "start_date": int(win_start.timestamp()),
-                                    "end_date":   int(win_end.timestamp())},
-                            headers={"accept": "application/json"},
-                            timeout=30,
-                        )
-                    r.raise_for_status()
-                    data = r.json()
-                    meta = data.get("meta", {})
-                    if not meta.get("success"):
-                        break
-                    records = data.get("result", [])
-                    page += 1
-                    if page == 1:
-                        print(".", end="", flush=True)
-                    else:
-                        print(f"p{page}", end="", flush=True)
 
-                    for rec in records:
-                        oid        = str(rec.get("order_id") or "").strip()
-                        code       = rec.get("clickpost_status_code")
-                        updated_at = rec.get("updated_at") or ""
-                        if not oid or code is None:
+            while True:
+                # retry up to 3 times with backoff
+                for attempt in range(3):
+                    try:
+                        if next_url:
+                            r = requests.get(next_url, headers={"accept": "application/json"}, timeout=30)
+                        else:
+                            r = requests.get(
+                                "https://api.clickpost.in/api/v1/updated-order",
+                                params={"key": CLICKPOST_KEY, "username": CLICKPOST_USERNAME,
+                                        "start_date": int(win_start.timestamp()),
+                                        "end_date":   int(win_end.timestamp())},
+                                headers={"accept": "application/json"},
+                                timeout=30,
+                            )
+                        if r.status_code == 429:
+                            wait = int(r.headers.get("Retry-After", 10))
+                            print(f"[RL:{wait}s]", end="", flush=True)
+                            time.sleep(wait)
                             continue
-                        existing = waybill_latest.get(oid)
-                        if existing is None or updated_at > existing.get("updated_at", ""):
-                            waybill_latest[oid] = rec
-
-                    next_url = meta.get("next") or None
-                    if not next_url or not records:
+                        r.raise_for_status()
                         break
-                    time.sleep(0.05)
-            except Exception as e:
-                print(f"[ERR:{e}]", end="", flush=True)
-            time.sleep(0.05)
+                    except Exception as e:
+                        print(f"[ERR:{e}]", end="", flush=True)
+                        time.sleep(5 * (attempt + 1))
+                else:
+                    break  # skip this window after 3 failures
+
+                data = r.json()
+                meta = data.get("meta", {})
+                if not meta.get("success"):
+                    break
+                records = data.get("result", [])
+                page += 1
+                if page == 1:
+                    print(".", end="", flush=True)
+                else:
+                    print(f"p{page}", end="", flush=True)
+
+                for rec in records:
+                    oid        = str(rec.get("order_id") or "").strip()
+                    code       = rec.get("clickpost_status_code")
+                    updated_at = rec.get("updated_at") or ""
+                    if not oid or code is None:
+                        continue
+                    existing = waybill_latest.get(oid)
+                    if existing is None or updated_at > existing.get("updated_at", ""):
+                        waybill_latest[oid] = rec
+
+                next_url = meta.get("next") or None
+                if not next_url or not records:
+                    break
+                time.sleep(0.2)  # avoid rate limiting between pages
+
+            time.sleep(0.1)  # avoid rate limiting between windows
 
     print(f"\nClickpost fetch complete — {len(waybill_latest):,} unique AWBs.", flush=True)
     return waybill_latest
