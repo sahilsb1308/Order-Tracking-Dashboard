@@ -8,7 +8,9 @@
 
 A live scoreboard for every order placed on Shopify since 1 July 2026.
 
-Every morning at 8:00 AM IST it pulls fresh data from Shopify and Clickpost, joins them, and writes two tabs — one with every individual order and one with a daily summary of where all orders stand.
+**Main sheet:** https://docs.google.com/spreadsheets/d/1bXoh1KPzgpPw8ppMSYMP8rBOYqoT39ENI3qfpjJGuHc
+
+Every morning at 8:00 AM IST it pulls fresh data from Shopify and Clickpost, joins them, and writes two tabs — one with every individual order and one with a daily summary of where all orders stand. A morning KPI snapshot is saved, and an evening email at 10:00 PM IST shows how numbers shifted during the day vs that morning snapshot.
 
 ---
 
@@ -54,6 +56,20 @@ Confirmed    =  PFD  +  In Transit  +  Out for Delivery  +  Delivered  +  Undeli
 ```
 
 Every order falls into exactly one bucket. The TOTAL row at the bottom of the Summary tab sums all columns.
+
+---
+
+## CLICKPOST STATUS → DASHBOARD MAPPING
+
+| Clickpost Status | Dashboard Bucket |
+|---|---|
+| PickedUp | In Transit |
+| InTransit, OriginCityIn, OriginCityOut, DestinationHubIn, ShipmentDelayed | In Transit |
+| Out for delivery | Out for Delivery |
+| Delivered | Delivered |
+| Failed delivery, ShipmentHeld | Undelivered |
+| RTO-Marked, RTO-InTransit, RTO-OutForDelivery, RTO-Delivered, RTO-ContactCustomer, RTO-ShipmentDelayed, Lost | RTO |
+| Order placed, Pickup pending, Out for pickup, AWB registered | PFD (fallthrough — no explicit code mapping) |
 
 ---
 
