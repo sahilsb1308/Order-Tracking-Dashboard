@@ -300,12 +300,16 @@ def build_summary(order_map, cp_status):
     grand = defaultdict(int)  # running totals across all dates
 
     for date_str in sorted(daily_counts.keys(), reverse=True):
-        c     = daily_counts[date_str]
-        total = sum(c.values()) or 1
+        c         = daily_counts[date_str]
+        total     = sum(c.values()) or 1
         confirmed = total - c["Cancelled"]
+        conf_denom = confirmed or 1  # avoid division by zero
 
-        def pct(v):
+        # Cancelled % vs Grand Total; PFD/In Transit/OFD/Delivered/Undelivered/RTO % vs Confirmed
+        def pct_of_total(v):
             return round(v / total, 4)
+        def pct_of_conf(v):
+            return round(v / conf_denom, 4)
 
         d = datetime.strptime(date_str, "%Y-%m-%d")
         rows.append([
@@ -314,15 +318,15 @@ def build_summary(order_map, cp_status):
             c["In Transit"], c["Out for delivery"],
             c["Delivered"], c["Undelivered"], c["RTO"],
             "",
-            pct(c["Cancelled"]), pct(c["PFD"]),
-            pct(c["In Transit"]), pct(c["Out for delivery"]),
-            pct(c["Delivered"]), pct(c["Undelivered"]), pct(c["RTO"]),
+            pct_of_total(c["Cancelled"]), pct_of_conf(c["PFD"]),
+            pct_of_conf(c["In Transit"]), pct_of_conf(c["Out for delivery"]),
+            pct_of_conf(c["Delivered"]), pct_of_conf(c["Undelivered"]), pct_of_conf(c["RTO"]),
         ])
 
         # accumulate totals
-        grand["total"]     += total
-        grand["Cancelled"] += c["Cancelled"]
-        grand["PFD"]       += c["PFD"]
+        grand["total"]            += total
+        grand["Cancelled"]        += c["Cancelled"]
+        grand["PFD"]              += c["PFD"]
         grand["In Transit"]       += c["In Transit"]
         grand["Out for delivery"] += c["Out for delivery"]
         grand["Delivered"]        += c["Delivered"]
@@ -330,11 +334,8 @@ def build_summary(order_map, cp_status):
         grand["RTO"]              += c["RTO"]
 
     # Totals row at the bottom
-    gt = grand["total"] or 1
-    g_confirmed = gt - grand["Cancelled"]
-
-    def gpct(v):
-        return round(v / gt, 4)
+    gt          = grand["total"] or 1
+    g_confirmed = (gt - grand["Cancelled"]) or 1
 
     rows.append([
         "TOTAL", gt,
@@ -342,9 +343,13 @@ def build_summary(order_map, cp_status):
         grand["In Transit"], grand["Out for delivery"],
         grand["Delivered"], grand["Undelivered"], grand["RTO"],
         "",
-        gpct(grand["Cancelled"]), gpct(grand["PFD"]),
-        gpct(grand["In Transit"]), gpct(grand["Out for delivery"]),
-        gpct(grand["Delivered"]), gpct(grand["Undelivered"]), gpct(grand["RTO"]),
+        round(grand["Cancelled"]        / gt,          4),
+        round(grand["PFD"]              / g_confirmed, 4),
+        round(grand["In Transit"]       / g_confirmed, 4),
+        round(grand["Out for delivery"] / g_confirmed, 4),
+        round(grand["Delivered"]        / g_confirmed, 4),
+        round(grand["Undelivered"]      / g_confirmed, 4),
+        round(grand["RTO"]              / g_confirmed, 4),
     ])
 
     return rows
@@ -472,6 +477,15 @@ def beautify(sh, orders_ws, summary_ws, num_order_rows):
                            "gridProperties": {"frozenRowCount": 1}},
             "fields": "gridProperties.frozenRowCount",
         }})
+
+    # ── Delete all existing CF rules before re-adding (prevents stale highlights on 0-value cells) ──
+    meta = sh.fetch_sheet_metadata()
+    for sheet in meta.get("sheets", []):
+        sheet_id = sheet["properties"]["sheetId"]
+        if sheet_id in (oid, sid):
+            existing_cf = sheet.get("conditionalFormats", [])
+            for i in range(len(existing_cf) - 1, -1, -1):
+                reqs.append({"deleteConditionalFormatRule": {"sheetId": sheet_id, "index": i}})
 
     # Conditional formatting on Status col (Orders col I = index 8)
     STATUS_CF = [
