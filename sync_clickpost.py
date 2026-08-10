@@ -43,13 +43,12 @@ STATUS_LABELS = ["Cancelled", "Confirmed", "PFD", "In Transit",
                  "Out for delivery", "Delivered", "Undelivered", "RTO"]
 
 STATUS_MAP = {
-    # Confirmed and Cancelled now come from Shopify, not Clickpost
-    # Codes 1-3 = pre-pickup stages (OrderPlaced, OutForPickup, PickedUp)
-    # Codes 1004-1006 = Clickpost internal transit codes
-    "In Transit":       {1, 2, 3, 4, 5, 17, 18, 19, 20, 25, 28, 1004, 1005, 1006},
+    # 1=OrderPlaced, 2=PickupPending, AWBRegistered → no code → all fall through to PFD
+    # 3=PickedUp is the first In Transit stage
+    "In Transit":       {3, 4, 5, 17, 18, 19, 20, 25, 28, 1004, 1005, 1006},
     "Out for delivery": {6, 44},
     "Delivered":        {8, 48},
-    "Undelivered":      {9},
+    "Undelivered":      {9, 43},   # 9=FailedDelivery, 43=ShipmentHeld
     "RTO":              {11, 12, 13, 14, 15, 21, 26, 27, 45, 46, 47, 50, 52},
 }
 
