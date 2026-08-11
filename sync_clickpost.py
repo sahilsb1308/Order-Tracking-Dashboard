@@ -40,7 +40,7 @@ FETCH_DAYS = (datetime.now(IST).date() - datetime.strptime(START_DATE, "%Y-%m-%d
 
 # ── Status mappings ───────────────────────────────────────────────────────────
 STATUS_LABELS = ["Cancelled", "Confirmed", "PFD", "In Transit",
-                 "Out for delivery", "Delivered", "Undelivered", "RTO"]
+                 "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO"]
 
 STATUS_MAP = {
     # PFD = pre-dispatch states: OrderPlaced(1), PickupPending/AWBRegistered(2)
@@ -50,6 +50,7 @@ STATUS_MAP = {
     "Out for delivery": {6, 44},
     "Delivered":        {8, 48},
     "Undelivered":      {9, 43},   # 9=FailedDelivery, 43=ShipmentHeld
+    "Lost":             {16},
     "RTO":              {11, 12, 13, 14, 15, 21, 26, 27, 45, 46, 47, 50, 52},
 }
 
@@ -317,11 +318,12 @@ def build_summary(order_map, cp_status):
             fmt_date(d), total,
             c["Cancelled"], confirmed, c["PFD"],
             c["In Transit"], c["Out for delivery"],
-            c["Delivered"], c["Undelivered"], c["RTO"],
+            c["Delivered"], c["Undelivered"], c["Lost"], c["RTO"],
             "",
             pct_of_total(c["Cancelled"]), pct_of_conf(c["PFD"]),
             pct_of_conf(c["In Transit"]), pct_of_conf(c["Out for delivery"]),
-            pct_of_conf(c["Delivered"]), pct_of_conf(c["Undelivered"]), pct_of_conf(c["RTO"]),
+            pct_of_conf(c["Delivered"]), pct_of_conf(c["Undelivered"]),
+            pct_of_conf(c["Lost"]), pct_of_conf(c["RTO"]),
         ])
 
         # accumulate totals
@@ -332,6 +334,7 @@ def build_summary(order_map, cp_status):
         grand["Out for delivery"] += c["Out for delivery"]
         grand["Delivered"]        += c["Delivered"]
         grand["Undelivered"]      += c["Undelivered"]
+        grand["Lost"]             += c["Lost"]
         grand["RTO"]              += c["RTO"]
 
     # Totals row at the bottom
@@ -342,7 +345,7 @@ def build_summary(order_map, cp_status):
         "TOTAL", gt,
         grand["Cancelled"], g_confirmed, grand["PFD"],
         grand["In Transit"], grand["Out for delivery"],
-        grand["Delivered"], grand["Undelivered"], grand["RTO"],
+        grand["Delivered"], grand["Undelivered"], grand["Lost"], grand["RTO"],
         "",
         round(grand["Cancelled"]        / gt,          4),
         round(grand["PFD"]              / g_confirmed, 4),
@@ -350,6 +353,7 @@ def build_summary(order_map, cp_status):
         round(grand["Out for delivery"] / g_confirmed, 4),
         round(grand["Delivered"]        / g_confirmed, 4),
         round(grand["Undelivered"]      / g_confirmed, 4),
+        round(grand["Lost"]             / g_confirmed, 4),
         round(grand["RTO"]              / g_confirmed, 4),
     ])
 
@@ -364,7 +368,7 @@ def beautify(sh, orders_ws, summary_ws, num_order_rows):
     oid, sid = orders_ws.id, summary_ws.id
     DARK, WHITE, ALT, BOLD_BG = "#1B2631", "#FFFFFF", "#F4F6F7", "#EAECEE"
     STAT_COLORS = ["#7F8C8D", "#2980B9", "#E67E22", "#8E44AD",
-                   "#16A085", "#27AE60", "#D35400", "#C0392B"]
+                   "#16A085", "#27AE60", "#D35400", "#555555", "#C0392B"]
 
     reqs = []
 
@@ -387,7 +391,7 @@ def beautify(sh, orders_ws, summary_ws, num_order_rows):
 
     # Summary: status + % column header colors
     for i, hex_color in enumerate(STAT_COLORS):
-        for col in [i + 2, i + 11]:
+        for col in [i + 2, i + 12]:
             reqs.append({"repeatCell": {
                 "range": {"sheetId": sid, "startRowIndex": 0, "endRowIndex": 1,
                           "startColumnIndex": col, "endColumnIndex": col + 1},
@@ -401,8 +405,8 @@ def beautify(sh, orders_ws, summary_ws, num_order_rows):
 
     # Summary: % columns (L–S = index 11–18) → PERCENT format
     reqs.append({"repeatCell": {
-        "range": {"sheetId": sid, "startRowIndex": 1, "endRowIndex": 50,
-                  "startColumnIndex": 11, "endColumnIndex": 18},
+        "range": {"sheetId": sid, "startRowIndex": 1, "endRowIndex": 60,
+                  "startColumnIndex": 12, "endColumnIndex": 20},
         "cell": {"userEnteredFormat": {
             "numberFormat": {"type": "PERCENT", "pattern": "0.0%"},
             "horizontalAlignment": "CENTER",
@@ -447,8 +451,8 @@ def beautify(sh, orders_ws, summary_ws, num_order_rows):
     # Column widths
     for sheet_id, widths in [
         (oid, [120, 160, 100, 120, 155, 155, 80, 130, 150, 100, 110, 260]),
-        (sid, [100, 90, 90, 90, 90, 90, 125, 90, 100, 80, 20,
-               90, 80, 90, 130, 90, 100, 80]),
+        (sid, [100, 90, 90, 90, 90, 90, 125, 90, 100, 70, 80, 20,
+               90, 80, 90, 130, 90, 100, 70, 80]),
     ]:
         for i, w in enumerate(widths):
             reqs.append({"updateDimensionProperties": {
@@ -494,6 +498,7 @@ def beautify(sh, orders_ws, summary_ws, num_order_rows):
         ("OutForDelivery", "#D1F2EB"), ("FailedDelivery", "#FDEBD0"),
         ("RTO", "#FADBD8"), ("Cancelled", "#EAECEE"),
         ("PickupPending", "#FEF9E7"), ("OrderPlaced", "#EBF5FB"),
+        ("Lost", "#D5D8DC"),
     ]
     for status_text, hex_color in STATUS_CF:
         reqs.append({"addConditionalFormatRule": {
