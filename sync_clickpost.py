@@ -392,6 +392,8 @@ def beautify(sh, orders_ws, summary_ws, num_order_rows):
     # Summary: status + % column header colors
     for i, hex_color in enumerate(STAT_COLORS):
         for col in [i + 2, i + 12]:
+            if col >= len(SUMMARY_COLS):
+                continue
             reqs.append({"repeatCell": {
                 "range": {"sheetId": sid, "startRowIndex": 0, "endRowIndex": 1,
                           "startColumnIndex": col, "endColumnIndex": col + 1},
