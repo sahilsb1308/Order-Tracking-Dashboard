@@ -437,9 +437,8 @@ def beautify(sh, orders_ws, summary_ws, num_order_rows):
     try:
         meta = sh.fetch_sheet_metadata()
         for sheet in meta.get("sheets", []):
-            if sheet["properties"]["sheetId"] == oid:
-                for band in sheet.get("bandedRanges", []):
-                    reqs.append({"deleteBanding": {"bandedRangeId": band["bandedRangeId"]}})
+            for band in sheet.get("bandedRanges", []):
+                reqs.append({"deleteBanding": {"bandedRangeId": band["bandedRangeId"]}})
     except Exception:
         pass
 
@@ -485,14 +484,18 @@ def beautify(sh, orders_ws, summary_ws, num_order_rows):
             "fields": "gridProperties.frozenRowCount",
         }})
 
-    # ── Delete all existing CF rules before re-adding (prevents stale highlights on 0-value cells) ──
-    meta = sh.fetch_sheet_metadata()
-    for sheet in meta.get("sheets", []):
+    # ── Delete all existing CF rules before re-adding ──────────────────────────
+    # fetch_sheet_metadata() only returns sheets.properties (no conditionalFormats),
+    # so we must request that field explicitly via a raw API call.
+    cf_meta = sh.client.request(
+        "get", sh.url,
+        params={"fields": "sheets(properties.sheetId,conditionalFormats)"},
+    ).json()
+    for sheet in cf_meta.get("sheets", []):
         sheet_id = sheet["properties"]["sheetId"]
-        if sheet_id in (oid, sid):
-            existing_cf = sheet.get("conditionalFormats", [])
-            for i in range(len(existing_cf) - 1, -1, -1):
-                reqs.append({"deleteConditionalFormatRule": {"sheetId": sheet_id, "index": i}})
+        existing_cf = sheet.get("conditionalFormats", [])
+        for i in range(len(existing_cf) - 1, -1, -1):
+            reqs.append({"deleteConditionalFormatRule": {"sheetId": sheet_id, "index": i}})
 
     # Conditional formatting on Status col (Orders col I = index 8)
     STATUS_CF = [
