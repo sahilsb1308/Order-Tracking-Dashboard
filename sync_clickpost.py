@@ -43,8 +43,9 @@ STATUS_LABELS = ["Cancelled", "Confirmed", "PFD", "In Transit",
                  "Out for delivery", "Delivered", "Undelivered", "RTO"]
 
 STATUS_MAP = {
-    # 1=OrderPlaced, 2=PickupPending, AWBRegistered → no code → all fall through to PFD
-    # 3=PickedUp is the first In Transit stage
+    # PFD = pre-dispatch states: OrderPlaced(1), PickupPending/AWBRegistered(2)
+    # "Out for pickup" and plain AWB registered have no distinct code → fall through to PFD via None
+    "PFD":              {1, 2},
     "In Transit":       {3, 4, 5, 17, 18, 19, 20, 25, 28, 1004, 1005, 1006},
     "Out for delivery": {6, 44},
     "Delivered":        {8, 48},
