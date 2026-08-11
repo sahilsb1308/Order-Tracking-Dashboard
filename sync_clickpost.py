@@ -510,24 +510,27 @@ def beautify(sh, orders_ws, summary_ws, num_order_rows):
             "index": 0,
         }})
 
-    # Summary: flag stale non-zero cells with light red
-    # PFD older than 3 days (skip rows 1-3, start at index 4), col E = index 4
-    # In Transit older than 10 days (skip rows 1-10, start at index 11), col F = index 5
-    # Undelivered older than 10 days, col I = index 8
+    # Summary: flag stale non-zero cells
+    # PFD older than 3 days  → col E (index 4), skip header + first 3 data rows → startRowIndex 4
+    # In Transit older than 10 days → col F (index 5), startRowIndex 11
+    # Undelivered older than 10 days → col I (index 8), startRowIndex 11
+    # Custom formula used so that 0-value cells are never highlighted
     STALE_CF = [
-        (4,  49, "#F4CCCC"),   # PFD col (index 4),        rows after first 3 days  — light red
-        (5,  11, "#FFF2CC"),   # In Transit col (index 5),  rows after first 10 days — light yellow
-        (8,  11, "#E6D0F0"),   # Undelivered col (index 8), rows after first 10 days — light purple
+        (4,  4,  "#F4CCCC", "E5"),    # PFD,        > 3 days stale — light red
+        (5,  11, "#FFF2CC", "F12"),   # In Transit, > 10 days stale — light yellow
+        (8,  11, "#E6D0F0", "I12"),   # Undelivered,> 10 days stale — light purple
     ]
-    for col_idx, start_row, hex_color in STALE_CF:
+    for col_idx, start_row, hex_color, cell_ref in STALE_CF:
         reqs.append({"addConditionalFormatRule": {
             "rule": {
                 "ranges": [{"sheetId": sid,
-                            "startRowIndex": start_row, "endRowIndex": 49,
+                            "startRowIndex": start_row, "endRowIndex": 60,
                             "startColumnIndex": col_idx, "endColumnIndex": col_idx + 1}],
                 "booleanRule": {
-                    "condition": {"type": "NUMBER_GREATER",
-                                  "values": [{"userEnteredValue": "0"}]},
+                    "condition": {
+                        "type": "CUSTOM_FORMULA",
+                        "values": [{"userEnteredValue": f'=AND({cell_ref}<>"",{cell_ref}>0)'}],
+                    },
                     "format": {"backgroundColor": rgb(hex_color)},
                 },
             },
