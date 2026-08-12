@@ -169,9 +169,10 @@ def fetch_shopify_orders():
 
 # ── Step 2: Fetch Clickpost statuses ─────────────────────────────────────────
 def fetch_clickpost_statuses():
-    """Returns dict: order_id (str) -> latest Clickpost record"""
+    """Returns (by_order_id, by_awb): both dicts map to latest Clickpost record"""
     now = datetime.now(IST)
     waybill_latest = {}
+    awb_latest = {}
 
     for day_offset in range(FETCH_DAYS):
         day       = (now - timedelta(days=day_offset)).date()
@@ -227,6 +228,7 @@ def fetch_clickpost_statuses():
 
                 for rec in records:
                     oid        = str(rec.get("order_id") or "").strip()
+                    awb        = str(rec.get("waybill") or "").strip()
                     code       = rec.get("clickpost_status_code")
                     updated_at = rec.get("updated_at") or ""
                     if not oid or code is None:
@@ -234,6 +236,10 @@ def fetch_clickpost_statuses():
                     existing = waybill_latest.get(oid)
                     if existing is None or updated_at > existing.get("updated_at", ""):
                         waybill_latest[oid] = rec
+                    if awb:
+                        existing_awb = awb_latest.get(awb)
+                        if existing_awb is None or updated_at > existing_awb.get("updated_at", ""):
+                            awb_latest[awb] = rec
 
                 next_url = meta.get("next") or None
                 if not next_url or not records:
@@ -242,11 +248,19 @@ def fetch_clickpost_statuses():
 
             time.sleep(0.1)  # avoid rate limiting between windows
 
-    print(f"\nClickpost fetch complete — {len(waybill_latest):,} unique AWBs.", flush=True)
-    return waybill_latest
+    print(f"\nClickpost fetch complete — {len(waybill_latest):,} by order_id, {len(awb_latest):,} by AWB.", flush=True)
+    return waybill_latest, awb_latest
 
 # ── Step 3: Join & build rows ─────────────────────────────────────────────────
-def build_orders(order_map, cp_status):
+def _cp_rec(order_number, shopify, cp_status, awb_status):
+    """Look up Clickpost record: try order_id first, fall back to AWB."""
+    rec = cp_status.get(order_number)
+    if rec is None:
+        awb = shopify.get("awb") or ""
+        rec = awb_status.get(awb) if awb else None
+    return rec or {}
+
+def build_orders(order_map, cp_status, awb_status):
     """One row per Shopify order, joined with Clickpost status by order_number."""
     rows = [ORDER_COLS]
     for order_number, shopify in sorted(
@@ -254,29 +268,29 @@ def build_orders(order_map, cp_status):
         key=lambda x: x[1].get("order_date", ""),
         reverse=True,
     ):
-        rec  = cp_status.get(order_number, {})
+        rec  = _cp_rec(order_number, shopify, cp_status, awb_status)
         code = rec.get("clickpost_status_code", "")
         cancelled = bool(shopify.get("cancelled_at")) and not shopify.get("has_fulfillment")
         rows.append([
             order_number,
-            shopify.get("awb", "") or rec.get("waybill", ""),
-            rec.get("channel_name", "Swiss Beauty"),
-            shopify.get("order_date", ""),
-            to_ist_str(rec.get("updated_at", "")),
-            rec.get("timestamp", ""),
+            shopify.get("awb") or rec.get("waybill") or "",
+            rec.get("channel_name") or "Swiss Beauty",
+            shopify.get("order_date") or "",
+            to_ist_str(rec.get("updated_at") or ""),
+            rec.get("timestamp") or "",
             code,
-            "Cancelled" if cancelled else rec.get("clickpost_status_description", ""),
-            rec.get("location", ""),
-            rec.get("clickpost_city", ""),
-            rec.get("courier_partner", ""),
-            rec.get("remark", ""),
+            "Cancelled" if cancelled else (rec.get("clickpost_status_description") or ""),
+            rec.get("location") or "",
+            rec.get("clickpost_city") or "",
+            rec.get("courier_partner") or "",
+            rec.get("remark") or "",
         ])
     return rows
 
-def build_summary(order_map, cp_status):
+def build_summary(order_map, cp_status, awb_status):
     """Group by Shopify order_date.
     Cancelled/Confirmed → from Shopify cancelled_at.
-    PFD = Confirmed − dispatched (orders with no Clickpost record yet).
+    PFD = orders with no Clickpost record after AWB fallback lookup.
     In Transit / OFD / Delivered / Undelivered / RTO → from Clickpost.
     """
     daily_counts = defaultdict(lambda: defaultdict(int))
@@ -289,7 +303,7 @@ def build_summary(order_map, cp_status):
         if shopify.get("cancelled_at") and not shopify.get("has_fulfillment"):
             cat = "Cancelled"
         else:
-            rec  = cp_status.get(order_number, {})
+            rec  = _cp_rec(order_number, shopify, cp_status, awb_status)
             code = rec.get("clickpost_status_code")
             cat  = get_category(code) if code is not None else None
             # No Clickpost record, or code not in our map → PFD (not yet dispatched)
@@ -561,13 +575,13 @@ def write_to_sheets(order_rows, summary_rows):
     print("Writing Orders tab...")
     orders_ws = get_or_create_sheet(sh, "Orders")
     orders_ws.clear()
-    orders_ws.update(order_rows, "A1")
+    orders_ws.update(order_rows, "A1", value_input_option="RAW")
     print(f"  {len(order_rows)-1:,} rows written.")
 
     print("Writing Summary tab...")
     summary_ws = get_or_create_sheet(sh, "Summary")
     summary_ws.clear()
-    summary_ws.update(summary_rows, "A1")
+    summary_ws.update(summary_rows, "A1", value_input_option="RAW")
     print(f"  {len(summary_rows)-1} rows written.")
 
     print("Applying formatting...")
@@ -577,8 +591,8 @@ def write_to_sheets(order_rows, summary_rows):
 if __name__ == "__main__":
     print(f"Syncing orders from {START_DATE} → Google Sheets...")
     order_map = fetch_shopify_orders()
-    cp_status = fetch_clickpost_statuses()
-    order_rows   = build_orders(order_map, cp_status)
-    summary_rows = build_summary(order_map, cp_status)
+    cp_status, awb_status = fetch_clickpost_statuses()
+    order_rows   = build_orders(order_map, cp_status, awb_status)
+    summary_rows = build_summary(order_map, cp_status, awb_status)
     write_to_sheets(order_rows, summary_rows)
     print("Done!")
