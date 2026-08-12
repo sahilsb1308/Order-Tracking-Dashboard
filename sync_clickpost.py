@@ -501,10 +501,11 @@ def beautify(sh, orders_ws, summary_ws, num_order_rows):
     # ── Delete all existing CF rules before re-adding ──────────────────────────
     # fetch_sheet_metadata() only returns sheets.properties (no conditionalFormats),
     # so we must request that field explicitly via a raw API call.
-    cf_meta = sh.client.request(
+    _cf_resp = sh.client.request(
         "get", sh.url,
         params={"fields": "sheets(properties.sheetId,conditionalFormats)"},
-    ).json()
+    )
+    cf_meta = _cf_resp.json() if _cf_resp.content else {}
     for sheet in cf_meta.get("sheets", []):
         sheet_id = sheet["properties"]["sheetId"]
         existing_cf = sheet.get("conditionalFormats", [])
