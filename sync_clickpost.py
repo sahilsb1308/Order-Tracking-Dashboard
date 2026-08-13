@@ -505,7 +505,10 @@ def beautify(sh, orders_ws, summary_ws, num_order_rows):
         "get", sh.url,
         params={"fields": "sheets(properties.sheetId,conditionalFormats)"},
     )
-    cf_meta = _cf_resp.json() if _cf_resp.content else {}
+    try:
+        cf_meta = _cf_resp.json()
+    except Exception:
+        cf_meta = {}
     for sheet in cf_meta.get("sheets", []):
         sheet_id = sheet["properties"]["sheetId"]
         existing_cf = sheet.get("conditionalFormats", [])
@@ -586,7 +589,10 @@ def write_to_sheets(order_rows, summary_rows):
     print(f"  {len(summary_rows)-1} rows written.")
 
     print("Applying formatting...")
-    beautify(sh, orders_ws, summary_ws, len(order_rows) - 1)
+    try:
+        beautify(sh, orders_ws, summary_ws, len(order_rows) - 1)
+    except Exception as e:
+        print(f"  Warning: formatting failed ({e}) — data was written successfully.")
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
