@@ -501,8 +501,9 @@ def beautify(sh, orders_ws, summary_ws, num_order_rows):
     # ── Delete all existing CF rules before re-adding ──────────────────────────
     # fetch_sheet_metadata() only returns sheets.properties (no conditionalFormats),
     # so we must request that field explicitly via a raw API call.
+    _api_url = f"https://sheets.googleapis.com/v4/spreadsheets/{sh.id}"
     _cf_resp = sh.client.request(
-        "get", sh.url,
+        "get", _api_url,
         params={"fields": "sheets(properties.sheetId,conditionalFormats)"},
     )
     try:
