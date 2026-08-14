@@ -98,7 +98,7 @@ def fetch_shopify_orders():
     url     = f"https://{SHOPIFY_STORE}/admin/api/2024-01/orders.json"
     headers = {"X-Shopify-Access-Token": SHOPIFY_TOKEN}
     params  = {
-        "created_at_min": f"{START_DATE}T00:00:00+05:30",
+        "created_at_min": f"{CUTOFF_DATE}T00:00:00+05:30",
         "status": "any",
         "limit":  250,
         "order":  "created_at asc",   # oldest first — July data fetched before August
