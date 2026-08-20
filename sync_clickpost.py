@@ -45,9 +45,9 @@ STATUS_LABELS = ["Cancelled", "Confirmed", "PFD", "In Transit",
                  "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO"]
 
 STATUS_MAP = {
-    # PFD = pre-dispatch states: OrderPlaced(1), PickupPending/AWBRegistered(2)
-    # "Out for pickup" and plain AWB registered have no distinct code → fall through to PFD via None
-    "PFD":              {1, 2},
+    # PFD = pre-dispatch states: OrderPlaced(1), AWBRegistered/PickupPending(2),
+    #       PickupRescheduled(14), OutForPickup(16)
+    "PFD":              {1, 2, 14, 16},
     "In Transit":       {3, 4, 5, 17, 18, 19, 20, 25, 28, 1004, 1005, 1006},
     "Out for delivery": {6, 44},
     "Delivered":        {8, 48},
@@ -577,7 +577,16 @@ def write_to_sheets(order_rows, summary_rows):
         scopes=["https://www.googleapis.com/auth/spreadsheets"],
     )
     gc = gspread.authorize(creds)
-    sh = gc.open_by_key(SHEET_ID)
+    for attempt in range(5):
+        try:
+            sh = gc.open_by_key(SHEET_ID)
+            break
+        except Exception as e:
+            if attempt == 4:
+                raise
+            wait = 10 * (attempt + 1)
+            print(f"  Sheets API error ({e}), retrying in {wait}s...")
+            time.sleep(wait)
 
     print("Writing Orders tab...")
     orders_ws = get_or_create_sheet(sh, "Orders")
