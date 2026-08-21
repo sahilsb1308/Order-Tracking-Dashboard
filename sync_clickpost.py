@@ -46,7 +46,7 @@ FETCH_DAYS    = (datetime.now(IST).date() - datetime.strptime(START_DATE, "%Y-%m
 
 # ── Status mappings ───────────────────────────────────────────────────────────
 STATUS_LABELS = ["Cancelled", "Confirmed", "PFD", "In Transit",
-                 "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO"]
+                 "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO", "NA"]
 
 # EasyEcom status → our category (pre-shipment only)
 EE_STATUS_MAP = {
@@ -369,7 +369,7 @@ def _resolve_category(order_number, shopify, cp_status, awb_status, ee_statuses)
         return ee_cat, rec          # EasyEcom fills pre-dispatch / gaps
     if cp_cat is not None:
         return cp_cat, rec          # Clickpost pre-dispatch fallback
-    return "PFD", rec               # nothing found → pending
+    return "NA", rec                # nothing found in either source
 
 def build_orders(order_map, cp_status, awb_status, ee_statuses):
     """One row per Shopify order, joined with Clickpost + EasyEcom status."""
