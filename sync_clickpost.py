@@ -20,6 +20,10 @@ CLICKPOST_USERNAME = os.getenv("CLICKPOST_USERNAME") or _require("CLICKPOST_USER
 SHOPIFY_STORE      = os.getenv("SHOPIFY_STORE")      or _require("SHOPIFY_STORE")
 SHOPIFY_TOKEN      = os.getenv("SHOPIFY_TOKEN")      or _require("SHOPIFY_TOKEN")
 SHEET_ID           = os.getenv("SHEET_ID")           or _require("SHEET_ID")
+EASYECOM_API_KEY      = os.getenv("EASYECOM_API_KEY")      or _require("EASYECOM_API_KEY")
+EASYECOM_EMAIL        = os.getenv("EASYECOM_EMAIL")        or _require("EASYECOM_EMAIL")
+EASYECOM_PASSWORD     = os.getenv("EASYECOM_PASSWORD")     or _require("EASYECOM_PASSWORD")
+EASYECOM_LOCATION_KEY = os.getenv("EASYECOM_LOCATION_KEY") or _require("EASYECOM_LOCATION_KEY")
 
 # Service account JSON: from env var (GitHub Actions) or local file path
 _SA_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
@@ -43,6 +47,18 @@ FETCH_DAYS    = (datetime.now(IST).date() - datetime.strptime(START_DATE, "%Y-%m
 # ── Status mappings ───────────────────────────────────────────────────────────
 STATUS_LABELS = ["Cancelled", "Confirmed", "PFD", "In Transit",
                  "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO"]
+
+# EasyEcom status → our category (pre-shipment only)
+EE_STATUS_MAP = {
+    "confirmed":        "Confirmed",
+    "cancelled":        "Cancelled",
+    "shipment created": "PFD",
+    "handover":         "PFD",
+    "shipment error":   "PFD",
+}
+
+# Categories that Clickpost is authoritative for (post-dispatch)
+POST_DISPATCH_CATS = {"In Transit", "Out for delivery", "Delivered", "Undelivered", "RTO", "Lost"}
 
 STATUS_MAP = {
     # PFD = pre-dispatch states: OrderPlaced(1), AWBRegistered/PickupPending(2),
@@ -253,7 +269,85 @@ def fetch_clickpost_statuses():
     print(f"\nClickpost fetch complete — {len(waybill_latest):,} by order_id, {len(awb_latest):,} by AWB.", flush=True)
     return waybill_latest, awb_latest
 
-# ── Step 3: Join & build rows ─────────────────────────────────────────────────
+# ── Step 3: Fetch EasyEcom pre-shipment statuses ─────────────────────────────
+def fetch_easyecom_statuses():
+    """Returns dict: order_number (str) → category (Confirmed/Cancelled/PFD).
+    Only covers pre-shipment statuses; post-dispatch comes from Clickpost.
+    """
+    print("Fetching EasyEcom token...", flush=True)
+    try:
+        resp = requests.post(
+            "https://api.easyecom.io/access/token",
+            headers={"x-api-key": EASYECOM_API_KEY, "Content-Type": "application/json"},
+            json={"email": EASYECOM_EMAIL, "password": EASYECOM_PASSWORD,
+                  "location_key": EASYECOM_LOCATION_KEY},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        token = resp.json().get("data", {}).get("jwt_token") or resp.json().get("token") or ""
+        if not token:
+            print(f"  EasyEcom auth failed: {resp.text[:200]}", flush=True)
+            return {}
+    except Exception as e:
+        print(f"  EasyEcom auth error: {e}", flush=True)
+        return {}
+
+    print("  Token obtained. Fetching EasyEcom orders...", flush=True)
+    headers = {"Authorization": f"Bearer {token}", "x-api-key": EASYECOM_API_KEY}
+
+    cutoff = datetime.now(IST).date() - timedelta(days=CP_FETCH_DAYS)
+    from_date = cutoff.strftime("%Y-%m-%d")
+    to_date   = datetime.now(IST).date().strftime("%Y-%m-%d")
+
+    ee_map = {}  # order_number → category
+    page = 1
+    while True:
+        for attempt in range(3):
+            try:
+                r = requests.get(
+                    "https://api.easyecom.io/orders",
+                    headers=headers,
+                    params={"from_date": from_date, "to_date": to_date,
+                            "page_no": page, "per_page": 250},
+                    timeout=60,
+                )
+                if r.status_code == 429:
+                    time.sleep(int(r.headers.get("Retry-After", 10)))
+                    continue
+                r.raise_for_status()
+                break
+            except Exception as e:
+                print(f"  [EasyEcom retry {attempt+1}] {e}", flush=True)
+                time.sleep(5)
+        else:
+            print("  EasyEcom fetch failed after retries — stopping.", flush=True)
+            break
+
+        body = r.json()
+        orders = (body.get("data") or {}).get("orders") or body.get("orders") or []
+        if not orders:
+            break
+
+        for o in orders:
+            ref    = str(o.get("reference_code") or o.get("channel_order_id") or "").strip()
+            status = str(o.get("order_status") or o.get("status") or "").strip().lower()
+            if not ref:
+                continue
+            cat = EE_STATUS_MAP.get(status)
+            if cat:
+                ee_map[ref] = cat
+
+        print(f"  EasyEcom page {page}: {len(orders)} orders", flush=True)
+        total = (body.get("data") or {}).get("total_records") or 0
+        if not orders or (total and len(ee_map) >= int(total)):
+            break
+        page += 1
+        time.sleep(0.3)
+
+    print(f"EasyEcom fetch complete — {len(ee_map):,} pre-shipment statuses.", flush=True)
+    return ee_map
+
+# ── Step 4: Join & build rows ─────────────────────────────────────────────────
 def _cp_rec(order_number, shopify, cp_status, awb_status):
     """Look up Clickpost record: try order_id first, fall back to AWB."""
     rec = cp_status.get(order_number)
@@ -262,17 +356,31 @@ def _cp_rec(order_number, shopify, cp_status, awb_status):
         rec = awb_status.get(awb) if awb else None
     return rec or {}
 
-def build_orders(order_map, cp_status, awb_status):
-    """One row per Shopify order, joined with Clickpost status by order_number."""
+def _resolve_category(order_number, shopify, cp_status, awb_status, ee_statuses):
+    """Priority: Clickpost post-dispatch > EasyEcom > Clickpost pre-dispatch > PFD fallback."""
+    rec     = _cp_rec(order_number, shopify, cp_status, awb_status)
+    cp_code = rec.get("clickpost_status_code")
+    cp_cat  = get_category(cp_code) if cp_code is not None else None
+    ee_cat  = ee_statuses.get(order_number)
+
+    if cp_cat in POST_DISPATCH_CATS:
+        return cp_cat, rec          # Clickpost is authoritative for post-dispatch
+    if ee_cat is not None:
+        return ee_cat, rec          # EasyEcom fills pre-dispatch / gaps
+    if cp_cat is not None:
+        return cp_cat, rec          # Clickpost pre-dispatch fallback
+    return "PFD", rec               # nothing found → pending
+
+def build_orders(order_map, cp_status, awb_status, ee_statuses):
+    """One row per Shopify order, joined with Clickpost + EasyEcom status."""
     rows = [ORDER_COLS]
     for order_number, shopify in sorted(
         order_map.items(),
         key=lambda x: x[1].get("order_date", ""),
         reverse=True,
     ):
-        rec  = _cp_rec(order_number, shopify, cp_status, awb_status)
+        cat, rec = _resolve_category(order_number, shopify, cp_status, awb_status, ee_statuses)
         code = rec.get("clickpost_status_code", "")
-        cancelled = bool(shopify.get("cancelled_at")) and not shopify.get("has_fulfillment")
         rows.append([
             order_number,
             shopify.get("awb") or rec.get("waybill") or "",
@@ -281,7 +389,7 @@ def build_orders(order_map, cp_status, awb_status):
             to_ist_str(rec.get("updated_at") or ""),
             rec.get("timestamp") or "",
             code,
-            "Cancelled" if cancelled else (rec.get("clickpost_status_description") or ""),
+            cat if cat in ("Cancelled", "PFD") else (rec.get("clickpost_status_description") or cat),
             rec.get("location") or "",
             rec.get("clickpost_city") or "",
             rec.get("courier_partner") or "",
@@ -289,11 +397,10 @@ def build_orders(order_map, cp_status, awb_status):
         ])
     return rows
 
-def build_summary(order_map, cp_status, awb_status):
+def build_summary(order_map, cp_status, awb_status, ee_statuses):
     """Group by Shopify order_date.
-    Cancelled/Confirmed → from Shopify cancelled_at.
-    PFD = orders with no Clickpost record after AWB fallback lookup.
-    In Transit / OFD / Delivered / Undelivered / RTO → from Clickpost.
+    Confirmed/Cancelled/PFD → EasyEcom (with Clickpost post-dispatch taking precedence).
+    In Transit / OFD / Delivered / Undelivered / RTO / Lost → Clickpost.
     """
     daily_counts = defaultdict(lambda: defaultdict(int))
 
@@ -302,16 +409,7 @@ def build_summary(order_map, cp_status, awb_status):
         if not order_date or order_date < CUTOFF_DATE:
             continue
 
-        if shopify.get("cancelled_at") and not shopify.get("has_fulfillment"):
-            cat = "Cancelled"
-        else:
-            rec  = _cp_rec(order_number, shopify, cp_status, awb_status)
-            code = rec.get("clickpost_status_code")
-            cat  = get_category(code) if code is not None else None
-            # No Clickpost record, or code not in our map → PFD (not yet dispatched)
-            if cat is None:
-                cat = "PFD"
-
+        cat, _ = _resolve_category(order_number, shopify, cp_status, awb_status, ee_statuses)
         daily_counts[order_date][cat] += 1
 
     rows = [SUMMARY_COLS]
@@ -611,7 +709,8 @@ if __name__ == "__main__":
     print(f"Syncing orders from {START_DATE} → Google Sheets...")
     order_map = fetch_shopify_orders()
     cp_status, awb_status = fetch_clickpost_statuses()
-    order_rows   = build_orders(order_map, cp_status, awb_status)
-    summary_rows = build_summary(order_map, cp_status, awb_status)
+    ee_statuses  = fetch_easyecom_statuses()
+    order_rows   = build_orders(order_map, cp_status, awb_status, ee_statuses)
+    summary_rows = build_summary(order_map, cp_status, awb_status, ee_statuses)
     write_to_sheets(order_rows, summary_rows)
     print("Done!")
