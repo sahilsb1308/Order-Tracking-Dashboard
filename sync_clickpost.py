@@ -51,6 +51,7 @@ STATUS_LABELS = ["Cancelled", "Confirmed", "PFD", "In Transit",
 # EasyEcom order_status field → our category
 EE_ORDER_STATUS_MAP = {
     "confirmed":         "Confirmed",
+    "open":              "Confirmed",   # EasyEcom sometimes uses "Open" for confirmed orders
     "cancelled":         "Cancelled",
     "assigned":          "PFD",
     "manifest scanned":  "PFD",
@@ -319,18 +320,27 @@ def fetch_easyecom_statuses():
     ee_map = {}  # order_number → category
 
     def _fetch_ee_pages(extra_params, label):
-        page = 1
         seen = 0
+        page = 1
+        next_url = None
         while True:
             for attempt in range(3):
                 try:
-                    r = requests.get(
-                        "https://api.easyecom.io/orders/V2/getAllOrders",
-                        headers=headers,
-                        params={"start_date": start_date, "end_date": end_date,
-                                "page_no": page, "per_page": 250, **extra_params},
-                        timeout=60,
-                    )
+                    if next_url:
+                        r = requests.get(
+                            f"https://api.easyecom.io{next_url}",
+                            headers=headers,
+                            timeout=60,
+                        )
+                    else:
+                        r = requests.get(
+                            "https://api.easyecom.io/orders/V2/getAllOrders",
+                            headers=headers,
+                            params={"start_date": start_date, "end_date": end_date,
+                                    "location_key": EASYECOM_LOCATION_KEY,
+                                    "per_page": 250, **extra_params},
+                            timeout=60,
+                        )
                     if r.status_code == 429:
                         time.sleep(int(r.headers.get("Retry-After", 10)))
                         continue
@@ -347,7 +357,7 @@ def fetch_easyecom_statuses():
             data   = body.get("data") or {}
             orders = data.get("orders") or body.get("orders") or []
             if not orders:
-                print(f"  EasyEcom {label} page {page}: 0 orders — stopping. Raw keys: {list(body.keys())}", flush=True)
+                print(f"  EasyEcom {label} page {page}: 0 orders — stopping. Keys: {list(body.keys())}", flush=True)
                 break
 
             for o in orders:
@@ -361,9 +371,9 @@ def fetch_easyecom_statuses():
                     ee_map[ref] = cat
                     seen += 1
 
+            next_url = data.get("nextUrl") or ""
             print(f"  EasyEcom {label} page {page}: {len(orders)} orders ({seen} mapped so far)", flush=True)
-            total = data.get("total_records") or data.get("total") or 0
-            if not orders or (total and page * 250 >= int(total)):
+            if not next_url:
                 break
             page += 1
             time.sleep(0.3)
