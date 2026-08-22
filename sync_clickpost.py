@@ -306,7 +306,7 @@ def fetch_easyecom_statuses():
         return {}
 
     print("  Token obtained. Fetching EasyEcom orders...", flush=True)
-    headers = {"Authorization": f"Bearer {token}", "x-api-key": EASYECOM_API_KEY}
+    headers = {"x-api-key": token}  # JWT token used as x-api-key for authenticated calls
 
     cutoff = datetime.now(IST).date() - timedelta(days=CP_FETCH_DAYS)
     from_date = cutoff.strftime("%Y-%m-%d")
