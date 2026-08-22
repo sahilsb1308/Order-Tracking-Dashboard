@@ -309,8 +309,8 @@ def fetch_easyecom_statuses():
     headers = {"x-api-key": token}  # JWT token used as x-api-key for authenticated calls
 
     cutoff = datetime.now(IST).date() - timedelta(days=CP_FETCH_DAYS)
-    from_date = cutoff.strftime("%Y-%m-%d")
-    to_date   = datetime.now(IST).date().strftime("%Y-%m-%d")
+    start_date = cutoff.strftime("%Y-%m-%d 00:00:00")
+    end_date   = datetime.now(IST).date().strftime("%Y-%m-%d 00:00:00")
 
     ee_map = {}  # order_number → category
 
@@ -321,9 +321,9 @@ def fetch_easyecom_statuses():
             for attempt in range(3):
                 try:
                     r = requests.get(
-                        "https://api.easyecom.io/orders",
+                        "https://api.easyecom.io/orders/V2/getAllOrders",
                         headers=headers,
-                        params={"from_date": from_date, "to_date": to_date,
+                        params={"start_date": start_date, "end_date": end_date,
                                 "page_no": page, "per_page": 250, **extra_params},
                         timeout=60,
                     )
@@ -340,12 +340,14 @@ def fetch_easyecom_statuses():
                 break
 
             body   = r.json()
-            orders = (body.get("data") or {}).get("orders") or body.get("orders") or []
+            data   = body.get("data") or {}
+            orders = data.get("orders") or body.get("orders") or []
             if not orders:
+                print(f"  EasyEcom {label} page {page}: 0 orders — stopping. Raw keys: {list(body.keys())}", flush=True)
                 break
 
             for o in orders:
-                ref             = str(o.get("reference_code") or o.get("channel_order_id") or "").strip()
+                ref             = str(o.get("reference_code") or o.get("channel_order_id") or o.get("order_id") or "").strip()
                 order_status    = str(o.get("order_status") or o.get("status") or "").strip().lower()
                 shipping_status = str(o.get("shipping_status") or o.get("shipment_status") or "").strip().lower()
                 if not ref:
@@ -355,8 +357,8 @@ def fetch_easyecom_statuses():
                     ee_map[ref] = cat
                     seen += 1
 
-            print(f"  EasyEcom {label} page {page}: {len(orders)} orders", flush=True)
-            total = (body.get("data") or {}).get("total_records") or 0
+            print(f"  EasyEcom {label} page {page}: {len(orders)} orders ({seen} mapped so far)", flush=True)
+            total = data.get("total_records") or data.get("total") or 0
             if not orders or (total and page * 250 >= int(total)):
                 break
             page += 1
