@@ -416,12 +416,10 @@ def build_summary(order_map, cp_status, awb_status, ee_statuses):
     grand = defaultdict(int)  # running totals across all dates
 
     for date_str in sorted(daily_counts.keys(), reverse=True):
-        c         = daily_counts[date_str]
-        total     = sum(c.values()) or 1
-        confirmed = total - c["Cancelled"]
-        conf_denom = confirmed or 1  # avoid division by zero
+        c          = daily_counts[date_str]
+        total      = sum(c.values()) or 1
+        conf_denom = (total - c["Cancelled"]) or 1  # non-cancelled denominator for %
 
-        # Cancelled % vs Grand Total; PFD/In Transit/OFD/Delivered/Undelivered/RTO % vs Confirmed
         def pct_of_total(v):
             return round(v / total, 4)
         def pct_of_conf(v):
@@ -430,19 +428,21 @@ def build_summary(order_map, cp_status, awb_status, ee_statuses):
         d = datetime.strptime(date_str, "%Y-%m-%d")
         rows.append([
             fmt_date(d), total,
-            c["Cancelled"], confirmed, c["PFD"],
+            c["Cancelled"], c["Confirmed"], c["PFD"],
             c["In Transit"], c["Out for delivery"],
-            c["Delivered"], c["Undelivered"], c["Lost"], c["RTO"],
+            c["Delivered"], c["Undelivered"], c["Lost"], c["RTO"], c["NA"],
             "",
             pct_of_total(c["Cancelled"]), pct_of_conf(c["PFD"]),
             pct_of_conf(c["In Transit"]), pct_of_conf(c["Out for delivery"]),
             pct_of_conf(c["Delivered"]), pct_of_conf(c["Undelivered"]),
             pct_of_conf(c["Lost"]), pct_of_conf(c["RTO"]),
+            pct_of_total(c["NA"]),
         ])
 
         # accumulate totals
         grand["total"]            += total
         grand["Cancelled"]        += c["Cancelled"]
+        grand["Confirmed"]        += c["Confirmed"]
         grand["PFD"]              += c["PFD"]
         grand["In Transit"]       += c["In Transit"]
         grand["Out for delivery"] += c["Out for delivery"]
@@ -450,25 +450,27 @@ def build_summary(order_map, cp_status, awb_status, ee_statuses):
         grand["Undelivered"]      += c["Undelivered"]
         grand["Lost"]             += c["Lost"]
         grand["RTO"]              += c["RTO"]
+        grand["NA"]               += c["NA"]
 
     # Totals row at the bottom
-    gt          = grand["total"] or 1
-    g_confirmed = (gt - grand["Cancelled"]) or 1
+    gt           = grand["total"] or 1
+    g_conf_denom = (gt - grand["Cancelled"]) or 1
 
     rows.append([
         "TOTAL", gt,
-        grand["Cancelled"], g_confirmed, grand["PFD"],
+        grand["Cancelled"], grand["Confirmed"], grand["PFD"],
         grand["In Transit"], grand["Out for delivery"],
-        grand["Delivered"], grand["Undelivered"], grand["Lost"], grand["RTO"],
+        grand["Delivered"], grand["Undelivered"], grand["Lost"], grand["RTO"], grand["NA"],
         "",
-        round(grand["Cancelled"]        / gt,          4),
-        round(grand["PFD"]              / g_confirmed, 4),
-        round(grand["In Transit"]       / g_confirmed, 4),
-        round(grand["Out for delivery"] / g_confirmed, 4),
-        round(grand["Delivered"]        / g_confirmed, 4),
-        round(grand["Undelivered"]      / g_confirmed, 4),
-        round(grand["Lost"]             / g_confirmed, 4),
-        round(grand["RTO"]              / g_confirmed, 4),
+        round(grand["Cancelled"]        / gt,           4),
+        round(grand["PFD"]              / g_conf_denom, 4),
+        round(grand["In Transit"]       / g_conf_denom, 4),
+        round(grand["Out for delivery"] / g_conf_denom, 4),
+        round(grand["Delivered"]        / g_conf_denom, 4),
+        round(grand["Undelivered"]      / g_conf_denom, 4),
+        round(grand["Lost"]             / g_conf_denom, 4),
+        round(grand["RTO"]              / g_conf_denom, 4),
+        round(grand["NA"]               / gt,           4),
     ])
 
     return rows
