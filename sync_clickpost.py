@@ -293,9 +293,13 @@ def fetch_easyecom_statuses():
             timeout=30,
         )
         resp.raise_for_status()
-        token = resp.json().get("data", {}).get("jwt_token") or resp.json().get("token") or ""
+        body  = resp.json()
+        data  = body.get("data") or {}
+        token = (data.get("jwt_token") or data.get("token") or data.get("access_token")
+                 or body.get("jwt_token") or body.get("token") or body.get("access_token") or "")
         if not token:
-            print(f"  EasyEcom auth failed: {resp.text[:200]}", flush=True)
+            print(f"  EasyEcom auth failed. Top-level keys: {list(body.keys())}", flush=True)
+            print(f"  data keys: {list(data.keys()) if isinstance(data, dict) else data}", flush=True)
             return {}
     except Exception as e:
         print(f"  EasyEcom auth error: {e}", flush=True)
