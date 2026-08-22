@@ -732,8 +732,8 @@ def write_to_sheets(order_rows, summary_rows):
 if __name__ == "__main__":
     print(f"Syncing orders from {START_DATE} → Google Sheets...")
     order_map = fetch_shopify_orders()
-    cp_status, awb_status = fetch_clickpost_statuses()
     ee_statuses  = fetch_easyecom_statuses()
+    cp_status, awb_status = fetch_clickpost_statuses()
     order_rows   = build_orders(order_map, cp_status, awb_status, ee_statuses)
     summary_rows = build_summary(order_map, cp_status, awb_status, ee_statuses)
     write_to_sheets(order_rows, summary_rows)
