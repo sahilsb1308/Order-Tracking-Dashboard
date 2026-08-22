@@ -48,10 +48,19 @@ FETCH_DAYS    = (datetime.now(IST).date() - datetime.strptime(START_DATE, "%Y-%m
 STATUS_LABELS = ["Cancelled", "Confirmed", "PFD", "In Transit",
                  "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO", "NA"]
 
-# EasyEcom status → our category (pre-shipment only)
-EE_STATUS_MAP = {
-    "confirmed":        "Confirmed",
-    "cancelled":        "Cancelled",
+# EasyEcom order_status field → our category
+EE_ORDER_STATUS_MAP = {
+    "confirmed":         "Confirmed",
+    "cancelled":         "Cancelled",
+    "assigned":          "PFD",
+    "manifest scanned":  "PFD",
+    "pending":           "PFD",
+    "printed":           "PFD",
+    "ready to dispatch": "PFD",
+}
+
+# EasyEcom shipping_status field → our category (separate field)
+EE_SHIPPING_STATUS_MAP = {
     "shipment created": "PFD",
     "handover":         "PFD",
     "shipment error":   "PFD",
@@ -332,11 +341,12 @@ def fetch_easyecom_statuses():
                 break
 
             for o in orders:
-                ref    = str(o.get("reference_code") or o.get("channel_order_id") or "").strip()
-                status = str(o.get("order_status") or o.get("status") or "").strip().lower()
+                ref             = str(o.get("reference_code") or o.get("channel_order_id") or "").strip()
+                order_status    = str(o.get("order_status") or o.get("status") or "").strip().lower()
+                shipping_status = str(o.get("shipping_status") or o.get("shipment_status") or "").strip().lower()
                 if not ref:
                     continue
-                cat = EE_STATUS_MAP.get(status)
+                cat = EE_ORDER_STATUS_MAP.get(order_status) or EE_SHIPPING_STATUS_MAP.get(shipping_status)
                 if cat:
                     ee_map[ref] = cat
                     seen += 1
@@ -351,8 +361,9 @@ def fetch_easyecom_statuses():
 
     # Fetch all active orders (confirmed, PFD statuses)
     n1 = _fetch_ee_pages({}, "active")
-    # Fetch cancelled orders separately (default endpoint excludes them)
-    n2 = _fetch_ee_pages({"order_status": "cancelled"}, "cancelled")
+    # Fetch cancelled orders separately — EasyEcom default endpoint excludes them
+    # Try both capitalizations since EasyEcom may be case-sensitive
+    n2 = _fetch_ee_pages({"order_status": "Cancelled"}, "cancelled")
 
     print(f"EasyEcom fetch complete — {n1} active + {n2} cancelled = {len(ee_map):,} total.", flush=True)
     return ee_map
@@ -367,10 +378,7 @@ def _cp_rec(order_number, shopify, cp_status, awb_status):
     return rec or {}
 
 def _resolve_category(order_number, shopify, cp_status, awb_status, ee_statuses):
-    """Priority: Shopify cancelled > Clickpost post-dispatch > EasyEcom > Clickpost pre-dispatch > NA."""
-    if shopify.get("cancelled_at"):
-        return "Cancelled", {}      # Shopify is authoritative for cancellations
-
+    """Priority: Clickpost post-dispatch > EasyEcom (Confirmed/Cancelled/PFD) > Clickpost pre-dispatch > NA."""
     rec     = _cp_rec(order_number, shopify, cp_status, awb_status)
     cp_code = rec.get("clickpost_status_code")
     cp_cat  = get_category(cp_code) if cp_code is not None else None
