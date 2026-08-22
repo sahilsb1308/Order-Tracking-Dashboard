@@ -29,4 +29,8 @@ jobs:
           SHOPIFY_TOKEN:               ${{ secrets.SHOPIFY_TOKEN }}
           SHEET_ID:                    ${{ secrets.SHEET_ID }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          EASYECOM_API_KEY:            ${{ secrets.EASYECOM_API_KEY }}
+          EASYECOM_EMAIL:              ${{ secrets.EASYECOM_EMAIL }}
+          EASYECOM_PASSWORD:           ${{ secrets.EASYECOM_PASSWORD }}
+          EASYECOM_LOCATION_KEY:       ${{ secrets.EASYECOM_LOCATION_KEY }}
         run: python sync_clickpost.py
