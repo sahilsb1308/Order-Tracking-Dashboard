@@ -300,51 +300,61 @@ def fetch_easyecom_statuses():
     to_date   = datetime.now(IST).date().strftime("%Y-%m-%d")
 
     ee_map = {}  # order_number → category
-    page = 1
-    while True:
-        for attempt in range(3):
-            try:
-                r = requests.get(
-                    "https://api.easyecom.io/orders",
-                    headers=headers,
-                    params={"from_date": from_date, "to_date": to_date,
-                            "page_no": page, "per_page": 250},
-                    timeout=60,
-                )
-                if r.status_code == 429:
-                    time.sleep(int(r.headers.get("Retry-After", 10)))
-                    continue
-                r.raise_for_status()
+
+    def _fetch_ee_pages(extra_params, label):
+        page = 1
+        seen = 0
+        while True:
+            for attempt in range(3):
+                try:
+                    r = requests.get(
+                        "https://api.easyecom.io/orders",
+                        headers=headers,
+                        params={"from_date": from_date, "to_date": to_date,
+                                "page_no": page, "per_page": 250, **extra_params},
+                        timeout=60,
+                    )
+                    if r.status_code == 429:
+                        time.sleep(int(r.headers.get("Retry-After", 10)))
+                        continue
+                    r.raise_for_status()
+                    break
+                except Exception as e:
+                    print(f"  [EasyEcom {label} retry {attempt+1}] {e}", flush=True)
+                    time.sleep(5)
+            else:
+                print(f"  EasyEcom {label} fetch failed after retries — stopping.", flush=True)
                 break
-            except Exception as e:
-                print(f"  [EasyEcom retry {attempt+1}] {e}", flush=True)
-                time.sleep(5)
-        else:
-            print("  EasyEcom fetch failed after retries — stopping.", flush=True)
-            break
 
-        body = r.json()
-        orders = (body.get("data") or {}).get("orders") or body.get("orders") or []
-        if not orders:
-            break
+            body   = r.json()
+            orders = (body.get("data") or {}).get("orders") or body.get("orders") or []
+            if not orders:
+                break
 
-        for o in orders:
-            ref    = str(o.get("reference_code") or o.get("channel_order_id") or "").strip()
-            status = str(o.get("order_status") or o.get("status") or "").strip().lower()
-            if not ref:
-                continue
-            cat = EE_STATUS_MAP.get(status)
-            if cat:
-                ee_map[ref] = cat
+            for o in orders:
+                ref    = str(o.get("reference_code") or o.get("channel_order_id") or "").strip()
+                status = str(o.get("order_status") or o.get("status") or "").strip().lower()
+                if not ref:
+                    continue
+                cat = EE_STATUS_MAP.get(status)
+                if cat:
+                    ee_map[ref] = cat
+                    seen += 1
 
-        print(f"  EasyEcom page {page}: {len(orders)} orders", flush=True)
-        total = (body.get("data") or {}).get("total_records") or 0
-        if not orders or (total and len(ee_map) >= int(total)):
-            break
-        page += 1
-        time.sleep(0.3)
+            print(f"  EasyEcom {label} page {page}: {len(orders)} orders", flush=True)
+            total = (body.get("data") or {}).get("total_records") or 0
+            if not orders or (total and page * 250 >= int(total)):
+                break
+            page += 1
+            time.sleep(0.3)
+        return seen
 
-    print(f"EasyEcom fetch complete — {len(ee_map):,} pre-shipment statuses.", flush=True)
+    # Fetch all active orders (confirmed, PFD statuses)
+    n1 = _fetch_ee_pages({}, "active")
+    # Fetch cancelled orders separately (default endpoint excludes them)
+    n2 = _fetch_ee_pages({"order_status": "cancelled"}, "cancelled")
+
+    print(f"EasyEcom fetch complete — {n1} active + {n2} cancelled = {len(ee_map):,} total.", flush=True)
     return ee_map
 
 # ── Step 4: Join & build rows ─────────────────────────────────────────────────
