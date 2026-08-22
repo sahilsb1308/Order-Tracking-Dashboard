@@ -293,20 +293,24 @@ def fetch_easyecom_statuses():
             timeout=30,
         )
         resp.raise_for_status()
-        body  = resp.json()
-        data  = body.get("data") or {}
-        token = (data.get("jwt_token") or data.get("token") or data.get("access_token")
-                 or body.get("jwt_token") or body.get("token") or body.get("access_token") or "")
+        body     = resp.json()
+        # Response structure: body["token"] = {"jwt_token": "...", "token_type": "bearer", ...}
+        tok_obj  = body.get("token") or {}
+        token    = (tok_obj.get("jwt_token") if isinstance(tok_obj, dict) else str(tok_obj or "")) or ""
+        if not token:
+            # fallback: try other locations
+            data  = body.get("data") or {}
+            token = (data.get("jwt_token") or data.get("token") or
+                     body.get("jwt_token") or body.get("access_token") or "")
         if not token:
             print(f"  EasyEcom auth failed. Top-level keys: {list(body.keys())}", flush=True)
-            print(f"  data keys: {list(data.keys()) if isinstance(data, dict) else data}", flush=True)
             return {}
     except Exception as e:
         print(f"  EasyEcom auth error: {e}", flush=True)
         return {}
 
     print("  Token obtained. Fetching EasyEcom orders...", flush=True)
-    headers = {"x-api-key": token}  # JWT token used as x-api-key for authenticated calls
+    headers = {"Authorization": f"Bearer {token}", "x-api-key": EASYECOM_API_KEY}
 
     cutoff = datetime.now(IST).date() - timedelta(days=CP_FETCH_DAYS)
     start_date = cutoff.strftime("%Y-%m-%d 00:00:00")
