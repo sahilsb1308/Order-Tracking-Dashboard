@@ -20,10 +20,10 @@ CLICKPOST_USERNAME = os.getenv("CLICKPOST_USERNAME") or _require("CLICKPOST_USER
 SHOPIFY_STORE      = os.getenv("SHOPIFY_STORE")      or _require("SHOPIFY_STORE")
 SHOPIFY_TOKEN      = os.getenv("SHOPIFY_TOKEN")      or _require("SHOPIFY_TOKEN")
 SHEET_ID           = os.getenv("SHEET_ID")           or _require("SHEET_ID")
-EASYECOM_API_KEY      = os.getenv("EASYECOM_API_KEY")      or _require("EASYECOM_API_KEY")
-EASYECOM_EMAIL        = os.getenv("EASYECOM_EMAIL")        or _require("EASYECOM_EMAIL")
-EASYECOM_PASSWORD     = os.getenv("EASYECOM_PASSWORD")     or _require("EASYECOM_PASSWORD")
-EASYECOM_LOCATION_KEY = os.getenv("EASYECOM_LOCATION_KEY") or _require("EASYECOM_LOCATION_KEY")
+EASYECOM_API_KEY      = (os.getenv("EASYECOM_API_KEY")      or _require("EASYECOM_API_KEY")).strip()
+EASYECOM_EMAIL        = (os.getenv("EASYECOM_EMAIL")        or _require("EASYECOM_EMAIL")).strip()
+EASYECOM_PASSWORD     = (os.getenv("EASYECOM_PASSWORD")     or _require("EASYECOM_PASSWORD")).strip()
+EASYECOM_LOCATION_KEY = (os.getenv("EASYECOM_LOCATION_KEY") or _require("EASYECOM_LOCATION_KEY")).strip()
 
 # Service account JSON: from env var (GitHub Actions) or local file path
 _SA_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
