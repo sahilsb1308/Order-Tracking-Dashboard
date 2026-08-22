@@ -367,7 +367,10 @@ def _cp_rec(order_number, shopify, cp_status, awb_status):
     return rec or {}
 
 def _resolve_category(order_number, shopify, cp_status, awb_status, ee_statuses):
-    """Priority: Clickpost post-dispatch > EasyEcom > Clickpost pre-dispatch > PFD fallback."""
+    """Priority: Shopify cancelled > Clickpost post-dispatch > EasyEcom > Clickpost pre-dispatch > NA."""
+    if shopify.get("cancelled_at"):
+        return "Cancelled", {}      # Shopify is authoritative for cancellations
+
     rec     = _cp_rec(order_number, shopify, cp_status, awb_status)
     cp_code = rec.get("clickpost_status_code")
     cp_cat  = get_category(cp_code) if cp_code is not None else None
