@@ -378,18 +378,19 @@ def _cp_rec(order_number, shopify, cp_status, awb_status):
     return rec or {}
 
 def _resolve_category(order_number, shopify, cp_status, awb_status, ee_statuses):
-    """Priority: Clickpost (any status) > EasyEcom > NA.
-    If Clickpost has any record it always wins. EasyEcom only fills when Clickpost has nothing.
+    """Priority: Clickpost post-dispatch > EasyEcom pre-dispatch > NA.
+    Pre-dispatch (Confirmed/Cancelled/PFD) is always from EasyEcom.
+    Post-dispatch (In Transit/OFD/Delivered/Undelivered/RTO/Lost) always from Clickpost.
     """
     rec     = _cp_rec(order_number, shopify, cp_status, awb_status)
     cp_code = rec.get("clickpost_status_code")
     cp_cat  = get_category(cp_code) if cp_code is not None else None
     ee_cat  = ee_statuses.get(order_number)
 
-    if cp_cat is not None:
-        return cp_cat, rec          # Clickpost always wins if it has any status
+    if cp_cat in POST_DISPATCH_CATS:
+        return cp_cat, rec          # Clickpost wins for post-dispatch
     if ee_cat is not None:
-        return ee_cat, rec          # EasyEcom fills when Clickpost has no record
+        return ee_cat, rec          # EasyEcom handles all pre-dispatch
     return "NA", rec                # nothing found in either source
 
 def build_orders(order_map, cp_status, awb_status, ee_statuses):
