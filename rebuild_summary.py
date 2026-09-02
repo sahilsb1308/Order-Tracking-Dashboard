@@ -28,7 +28,7 @@ ss     = gc.open_by_key(SHEET_ID)
 
 # ── Status mappings (must match sync_clickpost.py) ────────────────────────────
 STATUS_MAP = {
-    "In Transit":       {3, 4, 5, 17, 18, 19, 20, 25, 28, 1004, 1005, 1006},
+    "In Transit":       {3, 4, 5, 7, 17, 18, 19, 20, 25, 28, 1004, 1005, 1006},
     "Out for delivery": {6, 44},
     "Delivered":        {8, 48},
     "Undelivered":      {9, 43},

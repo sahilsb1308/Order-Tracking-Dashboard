@@ -45,7 +45,7 @@ STATUS_LABELS = ["Cancelled", "Confirmed", "PFD", "In Transit",
                  "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO"]
 
 STATUS_MAP = {
-    "In Transit":       {3, 4, 5, 17, 18, 19, 20, 25, 28, 1004, 1005, 1006},
+    "In Transit":       {3, 4, 5, 7, 17, 18, 19, 20, 25, 28, 1004, 1005, 1006},
     "Out for delivery": {6, 44},
     "Delivered":        {8, 48},
     "Undelivered":      {9, 43},
@@ -54,6 +54,18 @@ STATUS_MAP = {
 }
 
 POST_DISPATCH = {"In Transit", "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO"}
+
+# Shopify shipment_status → Summary bucket (used as fallback when Clickpost has no status)
+SHOPIFY_SHIPMENT_MAP = {
+    "confirmed":          "In Transit",
+    "in_transit":         "In Transit",
+    "ready_for_pickup":   "In Transit",
+    "picked_up":          "In Transit",
+    "out_for_delivery":   "Out for delivery",
+    "delivered":          "Delivered",
+    "attempted_delivery": "Undelivered",
+    "failure":            "Undelivered",
+}
 
 SUMMARY_COLS = (["Date", "Grand Total"] + STATUS_LABELS +
                 [""] + [s + " %" for s in STATUS_LABELS if s != "Confirmed"])
@@ -138,21 +150,24 @@ def fetch_shopify_orders():
             except Exception:
                 order_date = ""
 
-            awb = ""
+            awb              = ""
+            shopify_shipment = ""
             for f in order.get("fulfillments", []):
                 tn = (f.get("tracking_number") or "").strip()
                 if tn:
                     awb = tn
+                    shopify_shipment = (f.get("shipment_status") or "").lower()
                     break
 
             raw_tags = order.get("tags") or ""
             tag_set  = {t.strip().lower() for t in raw_tags.split(",")} if raw_tags else set()
             order_map[order_number] = {
-                "order_date":      order_date,
-                "awb":             awb,
-                "cancelled_at":    order.get("cancelled_at") or "",
-                "has_fulfillment": bool(order.get("fulfillments")),
-                "tag_delivered":   "delivered" in tag_set,
+                "order_date":        order_date,
+                "awb":               awb,
+                "cancelled_at":      order.get("cancelled_at") or "",
+                "has_fulfillment":   bool(order.get("fulfillments")),
+                "tag_delivered":     "delivered" in tag_set,
+                "shopify_shipment":  shopify_shipment,  # e.g. "failure", "attempted_delivery"
             }
 
         print(f"  Page {page}: {len(orders)} orders (total: {len(order_map):,})", flush=True)
@@ -276,13 +291,18 @@ def build_orders(order_map, cp_status, awb_status):
         code = rec.get("clickpost_status_code", "")
         awb  = shopify.get("awb") or rec.get("waybill") or ""
 
-        if bool(shopify.get("cancelled_at")) and not shopify.get("has_fulfillment"):
+        if bool(shopify.get("cancelled_at")):
             category = "Cancelled"
         elif awb:
-            cp_cat   = get_category(code) if code != "" else None
-            category = cp_cat if cp_cat in POST_DISPATCH else (
-                "Delivered" if shopify.get("tag_delivered") else "PFD"
-            )
+            cp_cat = get_category(code) if code != "" else None
+            if cp_cat in POST_DISPATCH:
+                category = cp_cat
+            elif shopify.get("tag_delivered"):
+                category = "Delivered"
+            elif code == "":  # no Clickpost status — use Shopify shipment_status as fallback
+                category = SHOPIFY_SHIPMENT_MAP.get(shopify.get("shopify_shipment", ""), "PFD")
+            else:
+                category = "PFD"
         else:
             category = "Confirmed"  # no AWB — placed, not dispatched
 
@@ -316,15 +336,20 @@ def build_summary(order_map, cp_status, awb_status):
         if not order_date or order_date < CUTOFF_DATE:
             continue
 
-        if shopify.get("cancelled_at") and not shopify.get("has_fulfillment"):
+        if shopify.get("cancelled_at"):
             cat = "Cancelled"
         elif shopify.get("awb"):
             rec    = _cp_rec(order_number, shopify, cp_status, awb_status)
             code   = rec.get("clickpost_status_code")
             cp_cat = get_category(code) if code is not None else None
-            cat    = cp_cat if cp_cat in POST_DISPATCH else (
-                "Delivered" if shopify.get("tag_delivered") else "PFD"
-            )
+            if cp_cat in POST_DISPATCH:
+                cat = cp_cat
+            elif shopify.get("tag_delivered"):
+                cat = "Delivered"
+            elif code is None:  # no Clickpost status — use Shopify shipment_status as fallback
+                cat = SHOPIFY_SHIPMENT_MAP.get(shopify.get("shopify_shipment", ""), "PFD")
+            else:
+                cat = "PFD"
         else:
             cat = "_no_awb"  # no AWB — silent inside Confirmed umbrella
 
