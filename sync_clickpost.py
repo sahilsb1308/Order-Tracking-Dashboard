@@ -308,9 +308,10 @@ def build_summary(order_map, cp_status, awb_status):
             rec  = _cp_rec(order_number, shopify, cp_status, awb_status)
             code = rec.get("clickpost_status_code")
             cat  = get_category(code) if code is not None else None
-            # No Clickpost record, or code not in our map → PFD (not yet dispatched)
+            # No Clickpost record: if AWB exists → PFD (dispatched, not yet tracked)
+            #                      if no AWB    → Confirmed (not yet dispatched)
             if cat is None:
-                cat = "PFD"
+                cat = "PFD" if shopify.get("awb") else "Confirmed"
 
         daily_counts[order_date][cat] += 1
 
@@ -319,9 +320,9 @@ def build_summary(order_map, cp_status, awb_status):
 
     for date_str in sorted(daily_counts.keys(), reverse=True):
         c         = daily_counts[date_str]
-        total     = sum(c.values()) or 1
-        confirmed = total - c["Cancelled"]
-        conf_denom = confirmed or 1  # avoid division by zero
+        total      = sum(c.values()) or 1
+        confirmed  = c["Confirmed"]
+        conf_denom = (total - c["Cancelled"]) or 1  # non-cancelled base for %
 
         # Cancelled % vs Grand Total; PFD/In Transit/OFD/Delivered/Undelivered/RTO % vs Confirmed
         def pct_of_total(v):
@@ -345,6 +346,7 @@ def build_summary(order_map, cp_status, awb_status):
         # accumulate totals
         grand["total"]            += total
         grand["Cancelled"]        += c["Cancelled"]
+        grand["Confirmed"]        += c["Confirmed"]
         grand["PFD"]              += c["PFD"]
         grand["In Transit"]       += c["In Transit"]
         grand["Out for delivery"] += c["Out for delivery"]
@@ -359,7 +361,7 @@ def build_summary(order_map, cp_status, awb_status):
 
     rows.append([
         "TOTAL", gt,
-        grand["Cancelled"], g_confirmed, grand["PFD"],
+        grand["Cancelled"], grand["Confirmed"], grand["PFD"],
         grand["In Transit"], grand["Out for delivery"],
         grand["Delivered"], grand["Undelivered"], grand["Lost"], grand["RTO"],
         "",
