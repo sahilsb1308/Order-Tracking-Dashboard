@@ -43,10 +43,24 @@ def get_category(code):
             return cat
     return None
 
-STATUS_LABELS = ["Cancelled", "Confirmed", "Shopify Confirmed", "PFD", "In Transit",
+def derive_category(awb, status_code_str):
+    """Fallback: derive category from AWB + Status Code when Category column is empty."""
+    if not awb:
+        return "Confirmed"  # no AWB → no-AWB bucket (absorbed into Confirmed umbrella)
+    try:
+        code = int(status_code_str)
+    except (ValueError, TypeError):
+        return "PFD"  # has AWB, no Clickpost status
+    cp_cat = get_category(code)
+    return cp_cat if cp_cat in POST_DISPATCH else "PFD"
+
+STATUS_LABELS = ["Cancelled", "Confirmed", "PFD", "In Transit",
                  "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO"]
 SUMMARY_COLS  = (["Date", "Grand Total"] + STATUS_LABELS +
                  [""] + [s + " %" for s in STATUS_LABELS if s != "Confirmed"])
+
+VALID_CATS = {"Cancelled", "Confirmed", "PFD", "In Transit",
+              "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO"}
 
 # ── Read Orders tab ───────────────────────────────────────────────────────────
 print("Reading Orders tab...", flush=True)
@@ -55,25 +69,40 @@ rows = ws_orders.get_all_values()
 if not rows:
     print("Orders tab is empty."); exit(1)
 
-headers    = rows[0]
-col        = {h: i for i, h in enumerate(headers)}
-date_col     = col["Order Date (IST)"]
-category_col = col["Category"]
+headers  = rows[0]
+col      = {h: i for i, h in enumerate(headers)}
+
+date_col     = col.get("Order Date (IST)")
+category_col = col.get("Category")
+awb_col      = col.get("AWB")
+code_col     = col.get("Status Code")
+
+if date_col is None:
+    print("ERROR: 'Order Date (IST)' column not found in Orders tab."); exit(1)
 
 daily = defaultdict(lambda: defaultdict(int))
-
-VALID_CATS = {"Cancelled", "Shopify Confirmed", "PFD",
-              "In Transit", "Out for delivery", "Delivered",
-              "Undelivered", "Lost", "RTO"}
+fallback_count = 0
 
 for row in rows[1:]:
-    if len(row) <= max(date_col, category_col):
+    date = (row[date_col] if len(row) > date_col else "")[:10]
+    if not date:
         continue
-    date = (row[date_col] or "")[:10]
-    cat  = (row[category_col] or "").strip()
-    if not date or cat not in VALID_CATS:
-        continue
+
+    # Prefer stored Category; fall back to derivation from AWB + Status Code
+    cat = ""
+    if category_col is not None and len(row) > category_col:
+        cat = (row[category_col] or "").strip()
+
+    if cat not in VALID_CATS:
+        fallback_count += 1
+        awb  = (row[awb_col] or "").strip() if awb_col is not None and len(row) > awb_col else ""
+        code = (row[code_col] or "").strip() if code_col is not None and len(row) > code_col else ""
+        cat  = derive_category(awb, code)
+
     daily[date][cat] += 1
+
+if fallback_count:
+    print(f"  Note: {fallback_count} rows had no Category — derived from AWB/Status Code.", flush=True)
 
 # ── Build Summary rows ────────────────────────────────────────────────────────
 def fmt_date(d):
@@ -85,7 +114,7 @@ grand = defaultdict(int)
 for date_str in sorted(daily.keys(), reverse=True):
     c         = daily[date_str]
     total     = sum(c.values()) or 1
-    confirmed = total - c["Cancelled"]
+    confirmed = total - c["Cancelled"]   # Confirmed = Grand Total - Cancelled
     denom     = confirmed or 1
 
     def pct(v, base=denom):
@@ -98,38 +127,39 @@ for date_str in sorted(daily.keys(), reverse=True):
 
     out.append([
         label, total,
-        c["Cancelled"], confirmed, c["Shopify Confirmed"], c["PFD"],
+        c["Cancelled"], confirmed, c["PFD"],
         c["In Transit"], c["Out for delivery"],
         c["Delivered"], c["Undelivered"], c["Lost"], c["RTO"],
         "",
         round(c["Cancelled"] / total, 4),
-        pct(c["Shopify Confirmed"]), pct(c["PFD"]),
+        pct(c["PFD"]),
         pct(c["In Transit"]), pct(c["Out for delivery"]),
         pct(c["Delivered"]), pct(c["Undelivered"]), pct(c["Lost"]), pct(c["RTO"]),
     ])
 
-    for k in ["Cancelled", "Shopify Confirmed", "PFD", "In Transit",
+    for k in ["Cancelled", "PFD", "In Transit",
               "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO"]:
         grand[k] += c[k]
     grand["total"] += total
 
-gt  = grand["total"] or 1
-gc_ = (gt - grand["Cancelled"]) or 1
+gt              = grand["total"] or 1
+grand_confirmed = gt - grand["Cancelled"]
+denom           = grand_confirmed or 1
+
 out.append([
     "TOTAL", gt,
-    grand["Cancelled"], gc_, grand["Shopify Confirmed"], grand["PFD"],
+    grand["Cancelled"], grand_confirmed, grand["PFD"],
     grand["In Transit"], grand["Out for delivery"],
     grand["Delivered"], grand["Undelivered"], grand["Lost"], grand["RTO"],
     "",
-    round(grand["Cancelled"]           / gt,  4),
-    round(grand["Shopify Confirmed"]   / gc_, 4),
-    round(grand["PFD"]                 / gc_, 4),
-    round(grand["In Transit"]          / gc_, 4),
-    round(grand["Out for delivery"]    / gc_, 4),
-    round(grand["Delivered"]           / gc_, 4),
-    round(grand["Undelivered"]         / gc_, 4),
-    round(grand["Lost"]                / gc_, 4),
-    round(grand["RTO"]                 / gc_, 4),
+    round(grand["Cancelled"]        / gt,    4),
+    round(grand["PFD"]              / denom, 4),
+    round(grand["In Transit"]       / denom, 4),
+    round(grand["Out for delivery"] / denom, 4),
+    round(grand["Delivered"]        / denom, 4),
+    round(grand["Undelivered"]      / denom, 4),
+    round(grand["Lost"]             / denom, 4),
+    round(grand["RTO"]              / denom, 4),
 ])
 
 # ── Write Summary tab ─────────────────────────────────────────────────────────

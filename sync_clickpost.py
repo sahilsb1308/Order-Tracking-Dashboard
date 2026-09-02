@@ -41,7 +41,7 @@ CUTOFF_DATE   = (datetime.now(IST).date() - timedelta(days=CP_FETCH_DAYS)).isofo
 FETCH_DAYS    = (datetime.now(IST).date() - datetime.strptime(START_DATE, "%Y-%m-%d").date()).days + 1
 
 # ── Status mappings ───────────────────────────────────────────────────────────
-STATUS_LABELS = ["Cancelled", "Confirmed", "Shopify Confirmed", "PFD", "In Transit",
+STATUS_LABELS = ["Cancelled", "Confirmed", "PFD", "In Transit",
                  "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO"]
 
 STATUS_MAP = {
@@ -279,7 +279,7 @@ def build_orders(order_map, cp_status, awb_status):
             cp_cat   = get_category(code) if code != "" else None
             category = cp_cat if cp_cat in POST_DISPATCH else "PFD"
         else:
-            category = "Shopify Confirmed"
+            category = "Confirmed"  # no AWB — placed, not dispatched
 
         rows.append([
             order_number,
@@ -317,10 +317,9 @@ def build_summary(order_map, cp_status, awb_status):
             rec    = _cp_rec(order_number, shopify, cp_status, awb_status)
             code   = rec.get("clickpost_status_code")
             cp_cat = get_category(code) if code is not None else None
-            # AWB exists: post-dispatch wins; no post-dispatch → PFD
-            cat = cp_cat if cp_cat in POST_DISPATCH else "PFD"
+            cat    = cp_cat if cp_cat in POST_DISPATCH else "PFD"
         else:
-            cat = "Shopify Confirmed"  # no AWB — placed but not dispatched
+            cat = "_no_awb"  # no AWB — silent inside Confirmed umbrella
 
         daily_counts[order_date][cat] += 1
 
@@ -328,54 +327,51 @@ def build_summary(order_map, cp_status, awb_status):
     grand = defaultdict(int)
 
     for date_str in sorted(daily_counts.keys(), reverse=True):
-        c          = daily_counts[date_str]
-        total      = sum(c.values()) or 1
-        confirmed  = total - c["Cancelled"]  # umbrella: Grand Total - Cancelled
-        conf_denom = confirmed or 1
+        c         = daily_counts[date_str]
+        total     = sum(c.values()) or 1
+        confirmed = total - c["Cancelled"]        # Confirmed = Grand Total - Cancelled
+        denom     = confirmed or 1
 
-        def pct_of_total(v, base=total):
-            return round(v / base, 4)
-        def pct_of_conf(v, base=conf_denom):
+        def pct(v, base=denom):
             return round(v / base, 4)
 
         d = datetime.strptime(date_str, "%Y-%m-%d")
         rows.append([
             fmt_date(d), total,
-            c["Cancelled"], confirmed, c["Shopify Confirmed"], c["PFD"],
+            c["Cancelled"], confirmed, c["PFD"],
             c["In Transit"], c["Out for delivery"],
             c["Delivered"], c["Undelivered"], c["Lost"], c["RTO"],
             "",
-            pct_of_total(c["Cancelled"]),
-            pct_of_conf(c["Shopify Confirmed"]), pct_of_conf(c["PFD"]),
-            pct_of_conf(c["In Transit"]), pct_of_conf(c["Out for delivery"]),
-            pct_of_conf(c["Delivered"]), pct_of_conf(c["Undelivered"]),
-            pct_of_conf(c["Lost"]), pct_of_conf(c["RTO"]),
+            round(c["Cancelled"] / total, 4),
+            pct(c["PFD"]),
+            pct(c["In Transit"]), pct(c["Out for delivery"]),
+            pct(c["Delivered"]), pct(c["Undelivered"]),
+            pct(c["Lost"]), pct(c["RTO"]),
         ])
 
-        for k in ["Cancelled", "Shopify Confirmed", "PFD", "In Transit",
+        for k in ["Cancelled", "PFD", "In Transit",
                   "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO"]:
             grand[k] += c[k]
         grand["total"] += total
 
-    # Totals row at the bottom
-    gt          = grand["total"] or 1
-    g_confirmed = (gt - grand["Cancelled"]) or 1
+    gt             = grand["total"] or 1
+    grand_confirmed = gt - grand["Cancelled"]
+    denom          = grand_confirmed or 1
 
     rows.append([
         "TOTAL", gt,
-        grand["Cancelled"], g_confirmed, grand["Shopify Confirmed"], grand["PFD"],
+        grand["Cancelled"], grand_confirmed, grand["PFD"],
         grand["In Transit"], grand["Out for delivery"],
         grand["Delivered"], grand["Undelivered"], grand["Lost"], grand["RTO"],
         "",
-        round(grand["Cancelled"]           / gt,          4),
-        round(grand["Shopify Confirmed"]   / g_confirmed, 4),
-        round(grand["PFD"]                 / g_confirmed, 4),
-        round(grand["In Transit"]          / g_confirmed, 4),
-        round(grand["Out for delivery"]    / g_confirmed, 4),
-        round(grand["Delivered"]           / g_confirmed, 4),
-        round(grand["Undelivered"]         / g_confirmed, 4),
-        round(grand["Lost"]                / g_confirmed, 4),
-        round(grand["RTO"]                 / g_confirmed, 4),
+        round(grand["Cancelled"]        / gt,    4),
+        round(grand["PFD"]              / denom, 4),
+        round(grand["In Transit"]       / denom, 4),
+        round(grand["Out for delivery"] / denom, 4),
+        round(grand["Delivered"]        / denom, 4),
+        round(grand["Undelivered"]      / denom, 4),
+        round(grand["Lost"]             / denom, 4),
+        round(grand["RTO"]              / denom, 4),
     ])
 
     return rows
