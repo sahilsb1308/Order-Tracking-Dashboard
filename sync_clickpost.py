@@ -45,16 +45,15 @@ STATUS_LABELS = ["Cancelled", "Confirmed", "PFD", "In Transit",
                  "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO"]
 
 STATUS_MAP = {
-    # PFD = pre-dispatch states: OrderPlaced(1), AWBRegistered/PickupPending(2),
-    #       PickupRescheduled(14), OutForPickup(16)
-    "PFD":              {1, 2, 14, 16},
     "In Transit":       {3, 4, 5, 17, 18, 19, 20, 25, 28, 1004, 1005, 1006},
     "Out for delivery": {6, 44},
     "Delivered":        {8, 48},
-    "Undelivered":      {9, 43},   # 9=FailedDelivery, 43=ShipmentHeld
+    "Undelivered":      {9, 43},
     "Lost":             {16},
     "RTO":              {11, 12, 13, 14, 15, 21, 26, 27, 45, 46, 47, 50, 52},
 }
+
+POST_DISPATCH = {"In Transit", "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO"}
 
 SUMMARY_COLS = (["Date", "Grand Total"] + STATUS_LABELS +
                 [""] + [s + " %" for s in STATUS_LABELS if s != "Confirmed"])
@@ -304,14 +303,15 @@ def build_summary(order_map, cp_status, awb_status):
 
         if shopify.get("cancelled_at") and not shopify.get("has_fulfillment"):
             cat = "Cancelled"
+        elif shopify.get("awb"):
+            rec    = _cp_rec(order_number, shopify, cp_status, awb_status)
+            code   = rec.get("clickpost_status_code")
+            cp_cat = get_category(code) if code is not None else None
+            # AWB exists: post-dispatch Clickpost status wins; otherwise PFD
+            cat = cp_cat if cp_cat in POST_DISPATCH else "PFD"
         else:
-            rec  = _cp_rec(order_number, shopify, cp_status, awb_status)
-            code = rec.get("clickpost_status_code")
-            cat  = get_category(code) if code is not None else None
-            # No Clickpost record: if AWB exists → PFD (dispatched, not yet tracked)
-            #                      if no AWB    → Confirmed (not yet dispatched)
-            if cat is None:
-                cat = "PFD" if shopify.get("awb") else "Confirmed"
+            # No AWB → not dispatched yet → Confirmed (fallback keeps Grand Total balanced)
+            cat = "Confirmed"
 
         daily_counts[order_date][cat] += 1
 
