@@ -55,6 +55,9 @@ STATUS_MAP = {
 
 POST_DISPATCH = {"In Transit", "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO"}
 
+# Clickpost codes that mean "no real status" — defer to Shopify shipment_status fallback
+CP_NO_STATUS = {0}  # 0 = NoStatusExist
+
 # Shopify shipment_status → Summary bucket (used as fallback when Clickpost has no status)
 SHOPIFY_SHIPMENT_MAP = {
     "confirmed":          "In Transit",
@@ -291,15 +294,16 @@ def build_orders(order_map, cp_status, awb_status):
         code = rec.get("clickpost_status_code", "")
         awb  = shopify.get("awb") or rec.get("waybill") or ""
 
-        if bool(shopify.get("cancelled_at")):
+        if bool(shopify.get("cancelled_at")) or code == 10:
             category = "Cancelled"
         elif awb:
             cp_cat = get_category(code) if code != "" else None
+            no_real_status = (code == "" or code in CP_NO_STATUS)
             if cp_cat in POST_DISPATCH:
                 category = cp_cat
             elif shopify.get("tag_delivered"):
                 category = "Delivered"
-            elif code == "":  # no Clickpost status — use Shopify shipment_status as fallback
+            elif no_real_status:
                 category = SHOPIFY_SHIPMENT_MAP.get(shopify.get("shopify_shipment", ""), "PFD")
             else:
                 category = "PFD"
@@ -342,11 +346,14 @@ def build_summary(order_map, cp_status, awb_status):
             rec    = _cp_rec(order_number, shopify, cp_status, awb_status)
             code   = rec.get("clickpost_status_code")
             cp_cat = get_category(code) if code is not None else None
-            if cp_cat in POST_DISPATCH:
+            no_real_status = (code is None or code in CP_NO_STATUS)
+            if code == 10:
+                cat = "Cancelled"
+            elif cp_cat in POST_DISPATCH:
                 cat = cp_cat
             elif shopify.get("tag_delivered"):
                 cat = "Delivered"
-            elif code is None:  # no Clickpost status — use Shopify shipment_status as fallback
+            elif no_real_status:
                 cat = SHOPIFY_SHIPMENT_MAP.get(shopify.get("shopify_shipment", ""), "PFD")
             else:
                 cat = "PFD"
