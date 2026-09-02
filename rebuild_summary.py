@@ -28,7 +28,7 @@ ss     = gc.open_by_key(SHEET_ID)
 
 # ── Status mappings (must match sync_clickpost.py) ────────────────────────────
 STATUS_MAP = {
-    "In Transit":       {3, 4, 5, 7, 17, 18, 19, 20, 25, 28, 1004, 1005, 1006},
+    "In Transit":       {4, 5, 18, 19, 20, 1004, 1005, 1006},
     "Out for delivery": {6, 44},
     "Delivered":        {8, 48},
     "Undelivered":      {9, 43},
@@ -55,12 +55,12 @@ def derive_category(awb, status_code_str):
     return cp_cat if cp_cat in POST_DISPATCH else "PFD"
 
 STATUS_LABELS = ["Cancelled", "Confirmed", "PFD", "In Transit",
-                 "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO"]
+                 "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO", "NA"]
 SUMMARY_COLS  = (["Date", "Grand Total"] + STATUS_LABELS +
                  [""] + [s + " %" for s in STATUS_LABELS if s != "Confirmed"])
 
 VALID_CATS = {"Cancelled", "Confirmed", "PFD", "In Transit",
-              "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO"}
+              "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO", "NA"}
 
 # ── Read Orders tab ───────────────────────────────────────────────────────────
 print("Reading Orders tab...", flush=True)
@@ -129,16 +129,16 @@ for date_str in sorted(daily.keys(), reverse=True):
         label, total,
         c["Cancelled"], confirmed, c["PFD"],
         c["In Transit"], c["Out for delivery"],
-        c["Delivered"], c["Undelivered"], c["Lost"], c["RTO"],
+        c["Delivered"], c["Undelivered"], c["Lost"], c["RTO"], c["NA"],
         "",
         round(c["Cancelled"] / total, 4),
         pct(c["PFD"]),
         pct(c["In Transit"]), pct(c["Out for delivery"]),
-        pct(c["Delivered"]), pct(c["Undelivered"]), pct(c["Lost"]), pct(c["RTO"]),
+        pct(c["Delivered"]), pct(c["Undelivered"]), pct(c["Lost"]), pct(c["RTO"]), pct(c["NA"]),
     ])
 
     for k in ["Cancelled", "PFD", "In Transit",
-              "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO"]:
+              "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO", "NA"]:
         grand[k] += c[k]
     grand["total"] += total
 
@@ -150,7 +150,7 @@ out.append([
     "TOTAL", gt,
     grand["Cancelled"], grand_confirmed, grand["PFD"],
     grand["In Transit"], grand["Out for delivery"],
-    grand["Delivered"], grand["Undelivered"], grand["Lost"], grand["RTO"],
+    grand["Delivered"], grand["Undelivered"], grand["Lost"], grand["RTO"], grand["NA"],
     "",
     round(grand["Cancelled"]        / gt,    4),
     round(grand["PFD"]              / denom, 4),
@@ -160,6 +160,7 @@ out.append([
     round(grand["Undelivered"]      / denom, 4),
     round(grand["Lost"]             / denom, 4),
     round(grand["RTO"]              / denom, 4),
+    round(grand["NA"]               / denom, 4),
 ])
 
 # ── Write Summary tab ─────────────────────────────────────────────────────────

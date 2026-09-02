@@ -42,10 +42,10 @@ FETCH_DAYS    = (datetime.now(IST).date() - datetime.strptime(START_DATE, "%Y-%m
 
 # ── Status mappings ───────────────────────────────────────────────────────────
 STATUS_LABELS = ["Cancelled", "Confirmed", "PFD", "In Transit",
-                 "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO"]
+                 "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO", "NA"]
 
 STATUS_MAP = {
-    "In Transit":       {3, 4, 5, 7, 17, 18, 19, 20, 25, 28, 1004, 1005, 1006},
+    "In Transit":       {4, 5, 18, 19, 20, 1004, 1005, 1006},
     "Out for delivery": {6, 44},
     "Delivered":        {8, 48},
     "Undelivered":      {9, 43},
@@ -55,8 +55,13 @@ STATUS_MAP = {
 
 POST_DISPATCH = {"In Transit", "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO"}
 
+# Clickpost pre-dispatch codes → always PFD, supreme priority over Shopify fallback
+# 1=Order placed, 2=Pickup pending, 3=Pickup failed, 25=Out for pickup, 28=AWB registered
+PRE_DISPATCH_CODES = {1, 2, 3, 25, 28}
+
 # Clickpost codes that mean "no real status" — defer to Shopify shipment_status fallback
-CP_NO_STATUS = {0}  # 0 = NoStatusExist
+# 0=NoStatusExist, 7=NotServiceable, 17=Damaged
+CP_NO_STATUS = {0, 7, 17}
 
 # Shopify shipment_status → Summary bucket (used as fallback when Clickpost has no status)
 SHOPIFY_SHIPMENT_MAP = {
@@ -299,14 +304,16 @@ def build_orders(order_map, cp_status, awb_status):
         elif awb:
             cp_cat = get_category(code) if code != "" else None
             no_real_status = (code == "" or code in CP_NO_STATUS)
-            if cp_cat in POST_DISPATCH:
+            if code in PRE_DISPATCH_CODES:
+                category = "PFD"
+            elif cp_cat in POST_DISPATCH:
                 category = cp_cat
             elif shopify.get("tag_delivered"):
                 category = "Delivered"
             elif no_real_status:
                 category = SHOPIFY_SHIPMENT_MAP.get(shopify.get("shopify_shipment", ""), "PFD")
             else:
-                category = "PFD"
+                category = "NA"  # unmapped Clickpost code
         else:
             category = "Confirmed"  # no AWB — placed, not dispatched
 
@@ -349,6 +356,8 @@ def build_summary(order_map, cp_status, awb_status):
             no_real_status = (code is None or code in CP_NO_STATUS)
             if code == 10:
                 cat = "Cancelled"
+            elif code in PRE_DISPATCH_CODES:
+                cat = "PFD"
             elif cp_cat in POST_DISPATCH:
                 cat = cp_cat
             elif shopify.get("tag_delivered"):
@@ -356,7 +365,7 @@ def build_summary(order_map, cp_status, awb_status):
             elif no_real_status:
                 cat = SHOPIFY_SHIPMENT_MAP.get(shopify.get("shopify_shipment", ""), "PFD")
             else:
-                cat = "PFD"
+                cat = "NA"  # unmapped Clickpost code
         else:
             cat = "_no_awb"  # no AWB — silent inside Confirmed umbrella
 
@@ -379,29 +388,29 @@ def build_summary(order_map, cp_status, awb_status):
             fmt_date(d), total,
             c["Cancelled"], confirmed, c["PFD"],
             c["In Transit"], c["Out for delivery"],
-            c["Delivered"], c["Undelivered"], c["Lost"], c["RTO"],
+            c["Delivered"], c["Undelivered"], c["Lost"], c["RTO"], c["NA"],
             "",
             round(c["Cancelled"] / total, 4),
             pct(c["PFD"]),
             pct(c["In Transit"]), pct(c["Out for delivery"]),
             pct(c["Delivered"]), pct(c["Undelivered"]),
-            pct(c["Lost"]), pct(c["RTO"]),
+            pct(c["Lost"]), pct(c["RTO"]), pct(c["NA"]),
         ])
 
         for k in ["Cancelled", "PFD", "In Transit",
-                  "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO"]:
+                  "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO", "NA"]:
             grand[k] += c[k]
         grand["total"] += total
 
-    gt             = grand["total"] or 1
+    gt              = grand["total"] or 1
     grand_confirmed = gt - grand["Cancelled"]
-    denom          = grand_confirmed or 1
+    denom           = grand_confirmed or 1
 
     rows.append([
         "TOTAL", gt,
         grand["Cancelled"], grand_confirmed, grand["PFD"],
         grand["In Transit"], grand["Out for delivery"],
-        grand["Delivered"], grand["Undelivered"], grand["Lost"], grand["RTO"],
+        grand["Delivered"], grand["Undelivered"], grand["Lost"], grand["RTO"], grand["NA"],
         "",
         round(grand["Cancelled"]        / gt,    4),
         round(grand["PFD"]              / denom, 4),
@@ -411,6 +420,7 @@ def build_summary(order_map, cp_status, awb_status):
         round(grand["Undelivered"]      / denom, 4),
         round(grand["Lost"]             / denom, 4),
         round(grand["RTO"]              / denom, 4),
+        round(grand["NA"]               / denom, 4),
     ])
 
     return rows
