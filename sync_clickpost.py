@@ -307,11 +307,9 @@ def build_summary(order_map, cp_status, awb_status):
             rec    = _cp_rec(order_number, shopify, cp_status, awb_status)
             code   = rec.get("clickpost_status_code")
             cp_cat = get_category(code) if code is not None else None
-            # AWB exists: post-dispatch Clickpost status wins; otherwise PFD
             cat = cp_cat if cp_cat in POST_DISPATCH else "PFD"
         else:
-            # No AWB → not dispatched yet → Confirmed (fallback keeps Grand Total balanced)
-            cat = "Confirmed"
+            cat = "PFD_NONE"  # no AWB — counted under Confirmed umbrella
 
         daily_counts[order_date][cat] += 1
 
@@ -320,15 +318,14 @@ def build_summary(order_map, cp_status, awb_status):
 
     for date_str in sorted(daily_counts.keys(), reverse=True):
         c         = daily_counts[date_str]
-        total      = sum(c.values()) or 1
-        confirmed  = c["Confirmed"]
-        conf_denom = (total - c["Cancelled"]) or 1  # non-cancelled base for %
+        total     = sum(c.values()) or 1
+        confirmed = total - c["Cancelled"]  # Confirmed = Grand Total - Cancelled
+        conf_denom = confirmed or 1
 
-        # Cancelled % vs Grand Total; PFD/In Transit/OFD/Delivered/Undelivered/RTO % vs Confirmed
-        def pct_of_total(v):
-            return round(v / total, 4)
-        def pct_of_conf(v):
-            return round(v / conf_denom, 4)
+        def pct_of_total(v, base=total):
+            return round(v / base, 4)
+        def pct_of_conf(v, base=conf_denom):
+            return round(v / base, 4)
 
         d = datetime.strptime(date_str, "%Y-%m-%d")
         rows.append([
@@ -346,7 +343,6 @@ def build_summary(order_map, cp_status, awb_status):
         # accumulate totals
         grand["total"]            += total
         grand["Cancelled"]        += c["Cancelled"]
-        grand["Confirmed"]        += c["Confirmed"]
         grand["PFD"]              += c["PFD"]
         grand["In Transit"]       += c["In Transit"]
         grand["Out for delivery"] += c["Out for delivery"]
@@ -361,7 +357,7 @@ def build_summary(order_map, cp_status, awb_status):
 
     rows.append([
         "TOTAL", gt,
-        grand["Cancelled"], grand["Confirmed"], grand["PFD"],
+        grand["Cancelled"], g_confirmed, grand["PFD"],
         grand["In Transit"], grand["Out for delivery"],
         grand["Delivered"], grand["Undelivered"], grand["Lost"], grand["RTO"],
         "",
