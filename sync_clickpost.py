@@ -309,7 +309,7 @@ def build_summary(order_map, cp_status, awb_status):
             cp_cat = get_category(code) if code is not None else None
             cat = cp_cat if cp_cat in POST_DISPATCH else "PFD"
         else:
-            cat = "Shopify Confirmed"  # no AWB — placed but not dispatched yet
+            cat = "Shopify Confirmed"  # no AWB — placed on Shopify, not dispatched yet
 
         daily_counts[order_date][cat] += 1
 
