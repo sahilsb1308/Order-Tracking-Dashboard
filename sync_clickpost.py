@@ -101,7 +101,7 @@ def fetch_shopify_orders():
         "status": "any",
         "limit":  250,
         "order":  "created_at asc",   # oldest first — July data fetched before August
-        "fields": "id,order_number,created_at,fulfillments,cancelled_at",
+        "fields": "id,order_number,created_at,fulfillments,cancelled_at,tags",
     }
 
     order_map = {}  # order_number -> {order_date, shopify_id, awb}
@@ -145,11 +145,14 @@ def fetch_shopify_orders():
                     awb = tn
                     break
 
+            raw_tags = order.get("tags") or ""
+            tag_set  = {t.strip().lower() for t in raw_tags.split(",")} if raw_tags else set()
             order_map[order_number] = {
                 "order_date":      order_date,
                 "awb":             awb,
                 "cancelled_at":    order.get("cancelled_at") or "",
                 "has_fulfillment": bool(order.get("fulfillments")),
+                "tag_delivered":   "delivered" in tag_set,
             }
 
         print(f"  Page {page}: {len(orders)} orders (total: {len(order_map):,})", flush=True)
@@ -277,7 +280,9 @@ def build_orders(order_map, cp_status, awb_status):
             category = "Cancelled"
         elif awb:
             cp_cat   = get_category(code) if code != "" else None
-            category = cp_cat if cp_cat in POST_DISPATCH else "PFD"
+            category = cp_cat if cp_cat in POST_DISPATCH else (
+                "Delivered" if shopify.get("tag_delivered") else "PFD"
+            )
         else:
             category = "Confirmed"  # no AWB — placed, not dispatched
 
@@ -317,7 +322,9 @@ def build_summary(order_map, cp_status, awb_status):
             rec    = _cp_rec(order_number, shopify, cp_status, awb_status)
             code   = rec.get("clickpost_status_code")
             cp_cat = get_category(code) if code is not None else None
-            cat    = cp_cat if cp_cat in POST_DISPATCH else "PFD"
+            cat    = cp_cat if cp_cat in POST_DISPATCH else (
+                "Delivered" if shopify.get("tag_delivered") else "PFD"
+            )
         else:
             cat = "_no_awb"  # no AWB — silent inside Confirmed umbrella
 
