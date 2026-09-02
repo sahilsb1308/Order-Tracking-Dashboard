@@ -315,7 +315,7 @@ def build_orders(order_map, cp_status, awb_status):
             else:
                 category = "NA"  # unmapped Clickpost code
         else:
-            category = "Confirmed"  # no AWB — placed, not dispatched
+            category = SHOPIFY_SHIPMENT_MAP.get(shopify.get("shopify_shipment", ""), "NA")
 
         rows.append([
             order_number,
@@ -367,7 +367,7 @@ def build_summary(order_map, cp_status, awb_status):
             else:
                 cat = "NA"  # unmapped Clickpost code
         else:
-            cat = "_no_awb"  # no AWB — silent inside Confirmed umbrella
+            cat = SHOPIFY_SHIPMENT_MAP.get(shopify.get("shopify_shipment", ""), "NA")
 
         daily_counts[order_date][cat] += 1
 
