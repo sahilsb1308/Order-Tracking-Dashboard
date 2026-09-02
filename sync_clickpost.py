@@ -367,7 +367,7 @@ def build_summary(order_map, cp_status, awb_status):
             else:
                 cat = "NA"  # unmapped Clickpost code
         else:
-            cat = SHOPIFY_SHIPMENT_MAP.get(shopify.get("shopify_shipment", ""), "NA")
+            cat = SHOPIFY_SHIPMENT_MAP.get(shopify.get("shopify_shipment", ""), "PFD")
 
         daily_counts[order_date][cat] += 1
 
