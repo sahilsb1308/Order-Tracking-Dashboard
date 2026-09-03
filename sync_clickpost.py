@@ -174,11 +174,12 @@ def fetch_shopify_orders():
             tag_set  = {t.strip().lower() for t in raw_tags.split(",")} if raw_tags else set()
             order_map[order_number] = {
                 "order_date":        order_date,
+                "shopify_id":        str(order.get("id") or ""),
                 "awb":               awb,
                 "cancelled_at":      order.get("cancelled_at") or "",
                 "has_fulfillment":   bool(order.get("fulfillments")),
                 "tag_delivered":     "delivered" in tag_set,
-                "shopify_shipment":  shopify_shipment,  # e.g. "failure", "attempted_delivery"
+                "shopify_shipment":  shopify_shipment,
             }
 
         print(f"  Page {page}: {len(orders)} orders (total: {len(order_map):,})", flush=True)
@@ -199,10 +200,11 @@ def fetch_shopify_orders():
 
 # ── Step 2: Fetch Clickpost statuses ─────────────────────────────────────────
 def fetch_clickpost_statuses():
-    """Returns (by_order_id, by_awb): both dicts map to latest Clickpost record"""
+    """Returns (by_order_id, by_awb, by_reference): all dicts map to latest Clickpost record"""
     now = datetime.now(IST)
     waybill_latest = {}
-    awb_latest = {}
+    awb_latest     = {}
+    ref_latest     = {}  # keyed by reference_number (= Shopify internal id in most setups)
 
     for day_offset in range(CP_FETCH_DAYS):
         day       = (now - timedelta(days=day_offset)).date()
@@ -259,17 +261,23 @@ def fetch_clickpost_statuses():
                 for rec in records:
                     oid        = str(rec.get("order_id") or "").strip()
                     awb        = str(rec.get("waybill") or "").strip()
+                    ref        = str(rec.get("reference_number") or "").strip()
                     code       = rec.get("clickpost_status_code")
                     updated_at = rec.get("updated_at") or ""
+                    # always store by AWB if present (even when order_id or code is missing)
+                    if awb:
+                        existing_awb = awb_latest.get(awb)
+                        if existing_awb is None or updated_at > existing_awb.get("updated_at", ""):
+                            awb_latest[awb] = rec
+                    if ref:
+                        existing_ref = ref_latest.get(ref)
+                        if existing_ref is None or updated_at > existing_ref.get("updated_at", ""):
+                            ref_latest[ref] = rec
                     if not oid or code is None:
                         continue
                     existing = waybill_latest.get(oid)
                     if existing is None or updated_at > existing.get("updated_at", ""):
                         waybill_latest[oid] = rec
-                    if awb:
-                        existing_awb = awb_latest.get(awb)
-                        if existing_awb is None or updated_at > existing_awb.get("updated_at", ""):
-                            awb_latest[awb] = rec
 
                 next_url = meta.get("next") or None
                 if not next_url or not records:
@@ -278,19 +286,27 @@ def fetch_clickpost_statuses():
 
             time.sleep(0.1)  # avoid rate limiting between windows
 
-    print(f"\nClickpost fetch complete — {len(waybill_latest):,} by order_id, {len(awb_latest):,} by AWB.", flush=True)
-    return waybill_latest, awb_latest
+    print(f"\nClickpost fetch complete — {len(waybill_latest):,} by order_id, {len(awb_latest):,} by AWB, {len(ref_latest):,} by reference.", flush=True)
+    return waybill_latest, awb_latest, ref_latest
 
 # ── Step 3: Join & build rows ─────────────────────────────────────────────────
-def _cp_rec(order_number, shopify, cp_status, awb_status):
-    """Look up Clickpost record: try order_id first, fall back to AWB."""
+def _cp_rec(order_number, shopify, cp_status, awb_status, ref_status=None):
+    """Look up Clickpost record: order_id → Shopify internal id → AWB → reference_number."""
     rec = cp_status.get(order_number)
+    if rec is None:
+        shopify_id = shopify.get("shopify_id") or ""
+        if shopify_id:
+            rec = cp_status.get(shopify_id)
     if rec is None:
         awb = shopify.get("awb") or ""
         rec = awb_status.get(awb) if awb else None
+    if rec is None and ref_status:
+        shopify_id = shopify.get("shopify_id") or ""
+        if shopify_id:
+            rec = ref_status.get(shopify_id)
     return rec or {}
 
-def build_orders(order_map, cp_status, awb_status):
+def build_orders(order_map, cp_status, awb_status, ref_status=None):
     """One row per Shopify order, joined with Clickpost status by order_number."""
     rows = [ORDER_COLS]
     for order_number, shopify in sorted(
@@ -298,7 +314,7 @@ def build_orders(order_map, cp_status, awb_status):
         key=lambda x: x[1].get("order_date", ""),
         reverse=True,
     ):
-        rec  = _cp_rec(order_number, shopify, cp_status, awb_status)
+        rec  = _cp_rec(order_number, shopify, cp_status, awb_status, ref_status)
         code = rec.get("clickpost_status_code", "")
         awb  = shopify.get("awb") or rec.get("waybill") or ""
 
@@ -337,7 +353,7 @@ def build_orders(order_map, cp_status, awb_status):
         ])
     return rows
 
-def build_summary(order_map, cp_status, awb_status):
+def build_summary(order_map, cp_status, awb_status, ref_status=None):
     """Group by Shopify order_date.
     Cancelled/Confirmed → from Shopify cancelled_at.
     PFD = orders with no Clickpost record after AWB fallback lookup.
@@ -353,7 +369,7 @@ def build_summary(order_map, cp_status, awb_status):
         if shopify.get("cancelled_at"):
             cat = "Cancelled"
         else:
-            rec  = _cp_rec(order_number, shopify, cp_status, awb_status)
+            rec  = _cp_rec(order_number, shopify, cp_status, awb_status, ref_status)
             awb  = shopify.get("awb") or rec.get("waybill") or ""
             code = rec.get("clickpost_status_code")
             cp_cat = get_category(code) if code is not None else None
@@ -662,8 +678,8 @@ def write_to_sheets(order_rows, summary_rows):
 if __name__ == "__main__":
     print(f"Syncing orders from {START_DATE} → Google Sheets...")
     order_map = fetch_shopify_orders()
-    cp_status, awb_status = fetch_clickpost_statuses()
-    order_rows   = build_orders(order_map, cp_status, awb_status)
-    summary_rows = build_summary(order_map, cp_status, awb_status)
+    cp_status, awb_status, ref_status = fetch_clickpost_statuses()
+    order_rows   = build_orders(order_map, cp_status, awb_status, ref_status)
+    summary_rows = build_summary(order_map, cp_status, awb_status, ref_status)
     write_to_sheets(order_rows, summary_rows)
     print("Done!")
