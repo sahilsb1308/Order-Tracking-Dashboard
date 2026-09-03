@@ -349,12 +349,15 @@ def build_summary(order_map, cp_status, awb_status):
 
         if shopify.get("cancelled_at"):
             cat = "Cancelled"
-        elif shopify.get("awb"):
-            rec    = _cp_rec(order_number, shopify, cp_status, awb_status)
-            code   = rec.get("clickpost_status_code")
+        else:
+            rec  = _cp_rec(order_number, shopify, cp_status, awb_status)
+            awb  = shopify.get("awb") or rec.get("waybill") or ""
+            code = rec.get("clickpost_status_code")
             cp_cat = get_category(code) if code is not None else None
             no_real_status = (code is None or code in CP_NO_STATUS)
-            if code == 10:
+            if not awb:
+                cat = "Confirmed"  # no AWB anywhere — pending dispatch
+            elif code == 10:
                 cat = "Cancelled"
             elif code in PRE_DISPATCH_CODES:
                 cat = "PFD"
@@ -366,8 +369,6 @@ def build_summary(order_map, cp_status, awb_status):
                 cat = SHOPIFY_SHIPMENT_MAP.get(shopify.get("shopify_shipment", ""), "PFD")
             else:
                 cat = "NA"  # unmapped Clickpost code
-        else:
-            cat = "Confirmed"  # no AWB — pending dispatch
 
         daily_counts[order_date][cat] += 1
 
