@@ -76,7 +76,7 @@ SHOPIFY_SHIPMENT_MAP = {
 }
 
 SUMMARY_COLS = (["Date", "Grand Total"] + STATUS_LABELS +
-                [""] + [s + " %" for s in STATUS_LABELS if s != "Confirmed"])
+                [""] + [s + " %" for s in STATUS_LABELS])
 
 ORDER_COLS = [
     "Shopify Order #", "AWB", "Channel",
@@ -315,7 +315,7 @@ def build_orders(order_map, cp_status, awb_status):
             else:
                 category = "NA"  # unmapped Clickpost code
         else:
-            category = SHOPIFY_SHIPMENT_MAP.get(shopify.get("shopify_shipment", ""), "NA")
+            category = "Confirmed"  # no AWB — pending dispatch
 
         rows.append([
             order_number,
@@ -367,7 +367,7 @@ def build_summary(order_map, cp_status, awb_status):
             else:
                 cat = "NA"  # unmapped Clickpost code
         else:
-            cat = SHOPIFY_SHIPMENT_MAP.get(shopify.get("shopify_shipment", ""), "PFD")
+            cat = "Confirmed"  # no AWB — pending dispatch
 
         daily_counts[order_date][cat] += 1
 
@@ -375,10 +375,9 @@ def build_summary(order_map, cp_status, awb_status):
     grand = defaultdict(int)
 
     for date_str in sorted(daily_counts.keys(), reverse=True):
-        c         = daily_counts[date_str]
-        total     = sum(c.values()) or 1
-        confirmed = total - c["Cancelled"]        # Confirmed = Grand Total - Cancelled
-        denom     = confirmed or 1
+        c     = daily_counts[date_str]
+        total = sum(c.values()) or 1
+        denom = total or 1
 
         def pct(v, base=denom):
             return round(v / base, 4)
@@ -386,41 +385,40 @@ def build_summary(order_map, cp_status, awb_status):
         d = datetime.strptime(date_str, "%Y-%m-%d")
         rows.append([
             fmt_date(d), total,
-            c["Cancelled"], confirmed, c["PFD"],
+            c["Cancelled"], c["Confirmed"], c["PFD"],
             c["In Transit"], c["Out for delivery"],
             c["Delivered"], c["Undelivered"], c["Lost"], c["RTO"], c["NA"],
             "",
-            round(c["Cancelled"] / total, 4),
-            pct(c["PFD"]),
+            pct(c["Cancelled"]), pct(c["Confirmed"]), pct(c["PFD"]),
             pct(c["In Transit"]), pct(c["Out for delivery"]),
             pct(c["Delivered"]), pct(c["Undelivered"]),
             pct(c["Lost"]), pct(c["RTO"]), pct(c["NA"]),
         ])
 
-        for k in ["Cancelled", "PFD", "In Transit",
+        for k in ["Cancelled", "Confirmed", "PFD", "In Transit",
                   "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO", "NA"]:
             grand[k] += c[k]
         grand["total"] += total
 
-    gt              = grand["total"] or 1
-    grand_confirmed = gt - grand["Cancelled"]
-    denom           = grand_confirmed or 1
+    gt    = grand["total"] or 1
+    denom = gt
 
     rows.append([
         "TOTAL", gt,
-        grand["Cancelled"], grand_confirmed, grand["PFD"],
+        grand["Cancelled"], grand["Confirmed"], grand["PFD"],
         grand["In Transit"], grand["Out for delivery"],
         grand["Delivered"], grand["Undelivered"], grand["Lost"], grand["RTO"], grand["NA"],
         "",
-        round(grand["Cancelled"]        / gt,    4),
-        round(grand["PFD"]              / denom, 4),
-        round(grand["In Transit"]       / denom, 4),
-        round(grand["Out for delivery"] / denom, 4),
-        round(grand["Delivered"]        / denom, 4),
-        round(grand["Undelivered"]      / denom, 4),
-        round(grand["Lost"]             / denom, 4),
-        round(grand["RTO"]              / denom, 4),
-        round(grand["NA"]               / denom, 4),
+        round(grand["Cancelled"]        / gt, 4),
+        round(grand["Confirmed"]        / gt, 4),
+        round(grand["PFD"]              / gt, 4),
+        round(grand["In Transit"]       / gt, 4),
+        round(grand["Out for delivery"] / gt, 4),
+        round(grand["Delivered"]        / gt, 4),
+        round(grand["Undelivered"]      / gt, 4),
+        round(grand["Lost"]             / gt, 4),
+        round(grand["RTO"]              / gt, 4),
+        round(grand["NA"]               / gt, 4),
     ])
 
     return rows

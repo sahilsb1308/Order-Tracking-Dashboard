@@ -57,7 +57,7 @@ def derive_category(awb, status_code_str):
 STATUS_LABELS = ["Cancelled", "Confirmed", "PFD", "In Transit",
                  "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO", "NA"]
 SUMMARY_COLS  = (["Date", "Grand Total"] + STATUS_LABELS +
-                 [""] + [s + " %" for s in STATUS_LABELS if s != "Confirmed"])
+                 [""] + [s + " %" for s in STATUS_LABELS])
 
 VALID_CATS = {"Cancelled", "Confirmed", "PFD", "In Transit",
               "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO", "NA"}
@@ -112,12 +112,10 @@ out   = [SUMMARY_COLS]
 grand = defaultdict(int)
 
 for date_str in sorted(daily.keys(), reverse=True):
-    c         = daily[date_str]
-    total     = sum(c.values()) or 1
-    confirmed = total - c["Cancelled"]   # Confirmed = Grand Total - Cancelled
-    denom     = confirmed or 1
+    c     = daily[date_str]
+    total = sum(c.values()) or 1
 
-    def pct(v, base=denom):
+    def pct(v, base=total):
         return round(v / base, 4)
 
     try:
@@ -127,40 +125,38 @@ for date_str in sorted(daily.keys(), reverse=True):
 
     out.append([
         label, total,
-        c["Cancelled"], confirmed, c["PFD"],
+        c["Cancelled"], c["Confirmed"], c["PFD"],
         c["In Transit"], c["Out for delivery"],
         c["Delivered"], c["Undelivered"], c["Lost"], c["RTO"], c["NA"],
         "",
-        round(c["Cancelled"] / total, 4),
-        pct(c["PFD"]),
+        pct(c["Cancelled"]), pct(c["Confirmed"]), pct(c["PFD"]),
         pct(c["In Transit"]), pct(c["Out for delivery"]),
         pct(c["Delivered"]), pct(c["Undelivered"]), pct(c["Lost"]), pct(c["RTO"]), pct(c["NA"]),
     ])
 
-    for k in ["Cancelled", "PFD", "In Transit",
+    for k in ["Cancelled", "Confirmed", "PFD", "In Transit",
               "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO", "NA"]:
         grand[k] += c[k]
     grand["total"] += total
 
-gt              = grand["total"] or 1
-grand_confirmed = gt - grand["Cancelled"]
-denom           = grand_confirmed or 1
+gt = grand["total"] or 1
 
 out.append([
     "TOTAL", gt,
-    grand["Cancelled"], grand_confirmed, grand["PFD"],
+    grand["Cancelled"], grand["Confirmed"], grand["PFD"],
     grand["In Transit"], grand["Out for delivery"],
     grand["Delivered"], grand["Undelivered"], grand["Lost"], grand["RTO"], grand["NA"],
     "",
-    round(grand["Cancelled"]        / gt,    4),
-    round(grand["PFD"]              / denom, 4),
-    round(grand["In Transit"]       / denom, 4),
-    round(grand["Out for delivery"] / denom, 4),
-    round(grand["Delivered"]        / denom, 4),
-    round(grand["Undelivered"]      / denom, 4),
-    round(grand["Lost"]             / denom, 4),
-    round(grand["RTO"]              / denom, 4),
-    round(grand["NA"]               / denom, 4),
+    round(grand["Cancelled"]        / gt, 4),
+    round(grand["Confirmed"]        / gt, 4),
+    round(grand["PFD"]              / gt, 4),
+    round(grand["In Transit"]       / gt, 4),
+    round(grand["Out for delivery"] / gt, 4),
+    round(grand["Delivered"]        / gt, 4),
+    round(grand["Undelivered"]      / gt, 4),
+    round(grand["Lost"]             / gt, 4),
+    round(grand["RTO"]              / gt, 4),
+    round(grand["NA"]               / gt, 4),
 ])
 
 # ── Write Summary tab ─────────────────────────────────────────────────────────
