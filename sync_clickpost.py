@@ -162,10 +162,13 @@ def fetch_shopify_orders():
             shopify_shipment = ""
             for f in order.get("fulfillments", []):
                 tn = (f.get("tracking_number") or "").strip()
+                ss = (f.get("shipment_status") or "").lower()
                 if tn:
                     awb = tn
-                    shopify_shipment = (f.get("shipment_status") or "").lower()
+                    shopify_shipment = ss
                     break
+                elif ss and not shopify_shipment:
+                    shopify_shipment = ss  # capture even without tracking number
 
             raw_tags = order.get("tags") or ""
             tag_set  = {t.strip().lower() for t in raw_tags.split(",")} if raw_tags else set()
@@ -315,7 +318,7 @@ def build_orders(order_map, cp_status, awb_status):
             else:
                 category = "NA"  # unmapped Clickpost code
         else:
-            category = "Confirmed"  # no AWB — pending dispatch
+            category = SHOPIFY_SHIPMENT_MAP.get(shopify.get("shopify_shipment", ""), "Confirmed")
 
         rows.append([
             order_number,
@@ -356,7 +359,7 @@ def build_summary(order_map, cp_status, awb_status):
             cp_cat = get_category(code) if code is not None else None
             no_real_status = (code is None or code in CP_NO_STATUS)
             if not awb:
-                cat = "Confirmed"  # no AWB anywhere — pending dispatch
+                cat = SHOPIFY_SHIPMENT_MAP.get(shopify.get("shopify_shipment", ""), "Confirmed")
             elif code == 10:
                 cat = "Cancelled"
             elif code in PRE_DISPATCH_CODES:
