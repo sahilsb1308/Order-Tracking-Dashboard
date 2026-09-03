@@ -36,8 +36,8 @@ else:
 
 IST        = timezone(timedelta(hours=5, minutes=30))
 START_DATE    = "2026-07-01"   # fixed start — Shopify fetch (all orders stay visible)
-CP_FETCH_DAYS = 30             # Clickpost status refresh window (rolling, keeps run time bounded)
-CUTOFF_DATE   = (datetime.now(IST).date() - timedelta(days=CP_FETCH_DAYS)).isoformat()
+CP_FETCH_DAYS = 60             # Clickpost status refresh window — 60d covers delayed RTO cycles
+CUTOFF_DATE   = START_DATE     # Summary covers all orders since START_DATE
 FETCH_DAYS    = (datetime.now(IST).date() - datetime.strptime(START_DATE, "%Y-%m-%d").date()).days + 1
 
 # ── Status mappings ───────────────────────────────────────────────────────────
