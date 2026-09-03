@@ -55,6 +55,9 @@ STATUS_MAP = {
 
 POST_DISPATCH = {"In Transit", "Out for delivery", "Delivered", "Undelivered", "Lost", "RTO"}
 
+# Codes where we trust our updated-order fetch and skip the track-order verification
+TERMINAL_CODES = frozenset({8, 48} | {11, 12, 13, 14, 15, 21, 26, 27, 45, 46, 47, 50, 52})
+
 # Clickpost pre-dispatch codes → always PFD, supreme priority over Shopify fallback
 # 1=Order placed, 2=Pickup pending, 3=Pickup failed, 25=Out for pickup, 28=AWB registered
 PRE_DISPATCH_CODES = {1, 2, 3, 25, 28}
@@ -289,9 +292,110 @@ def fetch_clickpost_statuses():
     print(f"\nClickpost fetch complete — {len(waybill_latest):,} by order_id, {len(awb_latest):,} by AWB, {len(ref_latest):,} by reference.", flush=True)
     return waybill_latest, awb_latest, ref_latest
 
+# ── Step 2b: Supplemental track-order fetch (current status, no time window) ──
+def fetch_track_order_statuses(order_map, awb_status, cp_status):
+    """Call track-order API for non-terminal AWBs to get current status.
+    Returns track_latest dict: awb -> record with latest clickpost_status_code.
+    Only checks AWBs where updated-order gave a non-terminal status (or no status).
+    """
+    candidates = []  # list of (awb, cp_id)
+    for order_number, shopify in order_map.items():
+        awb = shopify.get("awb")
+        if not awb:
+            continue
+        rec = awb_status.get(awb) or cp_status.get(order_number) or {}
+        code = rec.get("clickpost_status_code")
+        if code in TERMINAL_CODES:
+            continue  # already confirmed terminal — skip
+        cp_id = rec.get("courier_partner") or 0
+        if not cp_id:
+            continue  # no cp_id → can't call track-order reliably
+        candidates.append((awb, int(cp_id)))
+
+    if not candidates:
+        print("\ntrack-order: no non-terminal candidates — skipping.", flush=True)
+        return {}
+
+    print(f"\ntrack-order: verifying {len(candidates):,} non-terminal AWBs...", flush=True)
+
+    from collections import defaultdict as _dd
+    by_cp = _dd(list)
+    for awb, cp_id in candidates:
+        by_cp[cp_id].append(awb)
+
+    track_latest = {}
+    call_count = 0
+
+    for cp_id, awbs in sorted(by_cp.items()):
+        for i in range(0, len(awbs), 15):
+            batch = awbs[i:i + 15]
+            for attempt in range(3):
+                try:
+                    r = requests.get(
+                        "https://api.clickpost.in/api/v2/track-order/",
+                        params={
+                            "username": CLICKPOST_USERNAME,
+                            "key":      CLICKPOST_KEY,
+                            "waybill":  ",".join(batch),
+                            "cp_id":    cp_id,
+                        },
+                        headers={"accept": "application/json"},
+                        timeout=30,
+                    )
+                    if r.status_code == 429:
+                        wait = int(r.headers.get("Retry-After", 15))
+                        print(f"[RL:{wait}s]", end="", flush=True)
+                        time.sleep(wait)
+                        continue
+                    r.raise_for_status()
+                    break
+                except Exception as e:
+                    print(f"[ERR:{e}]", end="", flush=True)
+                    time.sleep(5 * (attempt + 1))
+            else:
+                continue  # skip batch after 3 failures
+
+            result = r.json().get("result", {})
+            for awb_key, awb_data in result.items():
+                if not awb_data.get("valid"):
+                    continue
+                latest = awb_data.get("latest_status", {})
+                code = latest.get("clickpost_status_code")
+                if code is None:
+                    continue
+                track_latest[awb_key] = {
+                    "clickpost_status_code":        code,
+                    "clickpost_status_description": latest.get("clickpost_status_description", ""),
+                    "timestamp":                    latest.get("timestamp", ""),
+                    "remark":                       latest.get("remark", ""),
+                    "location":                     latest.get("location", ""),
+                    "waybill":                      awb_key,
+                    "courier_partner":              cp_id,
+                }
+
+            call_count += 1
+            if call_count % 200 == 0:
+                print(f"  {call_count:,} track-order calls done...", flush=True)
+            time.sleep(0.2)
+
+    rto_count = sum(
+        1 for rec in track_latest.values()
+        if rec.get("clickpost_status_code") in {11, 12, 13, 14, 15, 21, 26, 27, 45, 46, 47, 50, 52}
+    )
+    print(
+        f"\ntrack-order complete — {call_count:,} calls, "
+        f"{len(track_latest):,} results, {rto_count:,} RTO found.",
+        flush=True,
+    )
+    return track_latest
+
+
 # ── Step 3: Join & build rows ─────────────────────────────────────────────────
-def _cp_rec(order_number, shopify, cp_status, awb_status, ref_status=None):
-    """Look up Clickpost record: order_id → Shopify internal id → AWB → reference_number."""
+def _cp_rec(order_number, shopify, cp_status, awb_status, ref_status=None, track_latest=None):
+    """Look up Clickpost record: order_id → Shopify internal id → AWB → reference_number.
+    track_latest (from track-order API) overrides the status fields when available,
+    since it reflects the actual current state rather than the time-windowed snapshot.
+    """
     rec = cp_status.get(order_number)
     if rec is None:
         shopify_id = shopify.get("shopify_id") or ""
@@ -304,9 +408,17 @@ def _cp_rec(order_number, shopify, cp_status, awb_status, ref_status=None):
         shopify_id = shopify.get("shopify_id") or ""
         if shopify_id:
             rec = ref_status.get(shopify_id)
-    return rec or {}
+    rec = rec or {}
+    # Merge track-order result (current status) over the time-windowed record
+    if track_latest:
+        awb = shopify.get("awb") or rec.get("waybill") or ""
+        if awb:
+            tr = track_latest.get(awb)
+            if tr:
+                rec = {**rec, **tr}
+    return rec
 
-def build_orders(order_map, cp_status, awb_status, ref_status=None):
+def build_orders(order_map, cp_status, awb_status, ref_status=None, track_latest=None):
     """One row per Shopify order, joined with Clickpost status by order_number."""
     rows = [ORDER_COLS]
     for order_number, shopify in sorted(
@@ -314,7 +426,7 @@ def build_orders(order_map, cp_status, awb_status, ref_status=None):
         key=lambda x: x[1].get("order_date", ""),
         reverse=True,
     ):
-        rec  = _cp_rec(order_number, shopify, cp_status, awb_status, ref_status)
+        rec  = _cp_rec(order_number, shopify, cp_status, awb_status, ref_status, track_latest)
         code = rec.get("clickpost_status_code", "")
         awb  = shopify.get("awb") or rec.get("waybill") or ""
 
@@ -353,7 +465,7 @@ def build_orders(order_map, cp_status, awb_status, ref_status=None):
         ])
     return rows
 
-def build_summary(order_map, cp_status, awb_status, ref_status=None):
+def build_summary(order_map, cp_status, awb_status, ref_status=None, track_latest=None):
     """Group by Shopify order_date.
     Cancelled/Confirmed → from Shopify cancelled_at.
     PFD = orders with no Clickpost record after AWB fallback lookup.
@@ -369,7 +481,7 @@ def build_summary(order_map, cp_status, awb_status, ref_status=None):
         if shopify.get("cancelled_at"):
             cat = "Cancelled"
         else:
-            rec  = _cp_rec(order_number, shopify, cp_status, awb_status, ref_status)
+            rec  = _cp_rec(order_number, shopify, cp_status, awb_status, ref_status, track_latest)
             awb  = shopify.get("awb") or rec.get("waybill") or ""
             code = rec.get("clickpost_status_code")
             cp_cat = get_category(code) if code is not None else None
@@ -679,7 +791,8 @@ if __name__ == "__main__":
     print(f"Syncing orders from {START_DATE} → Google Sheets...")
     order_map = fetch_shopify_orders()
     cp_status, awb_status, ref_status = fetch_clickpost_statuses()
-    order_rows   = build_orders(order_map, cp_status, awb_status, ref_status)
-    summary_rows = build_summary(order_map, cp_status, awb_status, ref_status)
+    track_latest = fetch_track_order_statuses(order_map, awb_status, cp_status)
+    order_rows   = build_orders(order_map, cp_status, awb_status, ref_status, track_latest)
+    summary_rows = build_summary(order_map, cp_status, awb_status, ref_status, track_latest)
     write_to_sheets(order_rows, summary_rows)
     print("Done!")
